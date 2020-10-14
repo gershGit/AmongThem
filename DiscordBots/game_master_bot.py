@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 import random
 import time
 import copy
+from threading import Timer
+from asynctimer import AsyncTimer
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -13,6 +15,7 @@ GAME_MASTER = os.getenv('DISCORD_GAME_MASTER_ROLE')
 DEVELOPER = os.getenv('DISCORD_DEVELOPER_ROLE')
 IMPOSTER = os.getenv('DISCORD_IMPOSTER_ROLE')
 CREWMATE = os.getenv('DISCORD_CREWMATE_ROLE')
+PLAYER = os.getenv('DISCORD_PLAYER_ROLE')
 LOBBY = os.getenv('DISCORD_LOBBY_CHANNEL')
 GENERAL = os.getenv('DISCORD_GENERAL_CHANNEL')
 IMPOSTER_CHANNEL = os.getenv('DISCORD_IMPOSTER_CHANNEL')
@@ -26,21 +29,38 @@ class GameSettings:
         self.kill_cooldown = 30
         self.sabotoge_cooldown = 60
         self.meeting_count = 1
+        self.meeting_cooldown = 20
         self.door_time_crew = 60
         self.door_time_imposter = 30
-        self.meeting_cooldown = 20
+        self.meeting_return_time = 30
+        self.meeting_discussion_time = 30
+        self.meeting_voting_time = 60
 
 game_settings = GameSettings()
+meeting_status = False
+voting_active = False
+voting_timer = None
+warning_timer = None
+skipped_votes = 0
+casted_votes = 0
 
-def set_game(imposters=-1, tasks=-1, k_cool=-1, s_cool=-1):
+def set_game(imposters=-1, tasks=-1, m_count=-1, k_cool=-1, s_cool=-1, m_cool=-1, d_cool_crew=-1, d_cool_imposter=-1):
     if imposters != -1:
         game_settings.imposter_count = imposters
     if tasks != -1:
         game_settings.task_count = tasks
+    if m_count != -1:
+        game_settings.meeting_count = m_count
     if k_cool != -1:
         game_settings.kill_cooldown = k_cool
     if s_cool != -1:
         game_settings.sabotoge_cooldown = s_cool
+    if m_cool != -1:
+        game_settings.meeting_cooldown = m_cool
+    if d_cool_crew != -1:
+        game_settings.door_time_crew = d_cool_crew
+    if d_cool_imposter != -1:
+        game_settings.door_time_imposter = d_cool_imposter
 
 class Task:
     def __init__(self, name, short_name, location_list, crew_count, repeatable, subtask_count, instruction_list, remote_trigger):
@@ -64,7 +84,15 @@ class Task:
             return " : (" + str(self.completed_count) + "/" + str(self.subtask_count) + ")"
 
     def get_current_location(self):
-        return self.location_list[self.completed_count]
+        if (not self.is_complete()):
+            return self.location_list[self.completed_count]
+
+    def get_instruction(self):
+        if (not self.is_complete()):
+            return self.instruction_list[self.completed_count]
+
+    def complete_step(self):
+        self.completed_count = self.completed_count + 1
 
 #IRL task format
 #wires -> actually connect
@@ -123,13 +151,14 @@ class Player_Data:
         self.color = color
         self.role = "Player"
         self.alive = True
-        self.known_status = True
+        self.death_known = False
         self.tasks = []
         self.meetings = 1
         self.vote_available = True
         self.vote = None
+        self.votes_against = 0
         self.kill_cooldown = 30
-        self.door_cooldown = 60 
+        self.door_cooldown = 60
         self.meeting_cooldown = 20
         self.last_door_time = time.time()
         self.last_meeting_time = time.time()
@@ -142,24 +171,34 @@ class Player_Data:
         self.role = role
 
     def meeting_allowed(self):
-        return self.last_meeting_time - self.meeting_allowed > 0
+        if self.meetings > 0:
+            return self.get_meeting_remaining() <= 0
+        return False
 
     def door_allowed(self):
-        return self.last_door_time - self.door_cooldown > 0
+        return self.get_door_remaining() <= 0
 
     def kill_allowed(self):
         return self.last_kill_time - self.kill_cooldown > 0
 
+    def get_elapsed_meeting_time(self):
+        return time.time() - self.last_meeting_time
+
+    def get_door_elapsed(self):
+        return time.time() - self.last_door_time
+
     def get_meeting_remaining(self):
-        return self.meeting_cooldown - self.last_meeting_time
+        return self.meeting_cooldown - self.get_elapsed_meeting_time()
 
     def get_door_remaining(self):
-        return self.door_cooldown - self.last_door_time
+        return self.door_cooldown - self.get_door_elapsed()
 
     def get_kill_time_remaining(self):
         return self.kill_cooldown - self.last_kill_time
 
-   
+    def set_kill_time(self, time_in):
+        self.last_kill_time = time_in
+
 color_list = [
     "Red",
     "Green",
@@ -188,6 +227,21 @@ def get_player_by_name(name):
             return player
     return None
 
+#Gets the player based on their color
+def get_player_by_color(color):
+    for player in player_list:
+        if player.color == color:
+            return player
+    return None
+
+#Returns the number of players alive (including the imposters)
+def get_players_alive():
+    count = 0
+    for player in player_list:
+        if player.alive:
+            count = count + 1
+    return count
+
 #Returns a boolean representing if the author is in the list of crewmates
 def is_crewmate(handle):
     for crewmate in crew_list:
@@ -210,14 +264,15 @@ def is_crew_command(ctx):
 def is_imposter_command(ctx):
     return ctx.channel.type == discord.ChannelType.private and is_imposter(ctx.author)
 
-async def send_roster(channel):
+#Sends the current roster to the specified channel
+async def send_roster(channel, full_visibility):
     sendstr = "Roster:\n"
     for player in player_list:
-        sendstr = sendstr + "\t" + player.name + " (" + player.color + ")"           
-        if not player.is_alive() and player.known_status():
-            sendstr = sendstr = " [Dead]\n"
+        sendstr = sendstr + "\t" + player.name + " (" + player.color + ")"
+        if (not player.alive) and (player.death_known or full_visibility):
+            sendstr = sendstr + " [Dead]\n"
         else:
-            sendstr = sendstr = " [Alive]\n"
+            sendstr = sendstr + " [Alive]\n"
     await channel.send(sendstr)
 
 def refresh_game_settings():
@@ -261,11 +316,12 @@ async def check_player_available(name, handle, channel):
     for player in player_list:
         if player.name == name:
             await channel.send("Someone is already using that name!")
-            return
+            return False
         for player in player_list:
             if player.discord_handle == handle:
                 await channel.send("You are already in the lobby!")
-                return
+                return False
+    return True
 
 def add_player_to_lobby(player_data):
     player_list.append(player_data)
@@ -275,35 +331,50 @@ async def kick_player(handle, guild):
         if player_list[index].discord_handle == handle:
             player_list.remove(player_list[index])
             clear_roles(handle, guild)
-            await send_roster(guild.get_channel(LOBBY))
+            await send_roster(guild.get_channel(LOBBY), True)
             return
+
+#Resets all players to only have player role and clears the chat
+#All other reset data happens on !start command
+async def reset_lobby():
+    lobby_channel = bot.get_guild(int(GUILD)).get_channel(int(LOBBY))
+    await clean_chat(lobby_channel)
+    guild = bot.get_guild(int(GUILD))
+    members = await guild.fetch_members(limit=150).flatten()
+    for member in members:
+        if member == bot.user:
+            continue
+        for role in member.roles:
+            if role != guild.get_role(int(GUILD)) and role != guild.get_role(int(GAME_MASTER)) and role != guild.get_role(int(DEVELOPER)) and guild.get_role(int(PLAYER)):
+                await member.remove_roles(role)
+                print("Removed " + role.name + " from " + member.name)
+    await lobby_channel.send("Lobby reset, start game when ready!")
 
 #Randomly chooses an imposter from the list of players and fills the crew list with other members
 async def choose_imposter(guild):
-    clean_chat(guild.get_channel(int(IMPOSTER_CHANNEL)))
-
-    global imposters, crew_list
-    imposters.clear()
+    global imposters, crew_list, imposters_alive
+    imposters_alive = game_settings.imposter_count
+    imposters = []
     imposter_indices = []
-    for _ in range(game_settings.imposter_count):
+    for x in range(game_settings.imposter_count):
         index = random.randrange(0, len(player_list))
-        if not (index in imposter_indices):
+        if index not in imposter_indices:
             imposter_indices.append(index)
             imposters.append(player_list[index])
-            player_list[index] = player_list[index]
-            player_list[index].role = "Imposter"
-            player_list[index].door_cooldown = game_settings.door_time_imposter
-            player_list[index].meetings = game_settings.meeting_count
-            player_list[index].meeting_cooldown = game_settings.meeting_cooldown
-            player_list[index].kill_cooldown = game_settings.kill_cooldown
-            player_list[index].is_alive = True
-            player_list[index].known_status = True
-            await player_list[index].discord_handle.add_roles([guild.get_role(int(IMPOSTER)), guild.get_role(int(CREWMATE))])
-            await player_list[index].discord_handle.create_dm()
-            await player_list[index].discord_handle.dm_channel.send("You are an imposter, wait for the game to start")
-    crew_list.clear()
+            imposters[x] = player_list[index]
+            imposters[x].role = "Imposter"
+            imposters[x].door_cooldown = game_settings.door_time_imposter
+            imposters[x].meetings = game_settings.meeting_count
+            imposters[x].meeting_cooldown = game_settings.meeting_cooldown
+            imposters[x].kill_cooldown = game_settings.kill_cooldown
+            imposters[x].is_alive = True
+            imposters[x].death_known = False
+            await imposters[x].discord_handle.add_roles(guild.get_role(int(IMPOSTER)))
+            await imposters[x].discord_handle.create_dm()
+            await imposters[x].discord_handle.dm_channel.send(".\n\n\n\n\n\n\n\n\n\nYou are an imposter, wait for the game to start")
+    crew_list = []
     for x in range(len(player_list)):
-        if not x in imposter_indices:
+        if x not in imposter_indices:
             crew_list.append(player_list[x])
             player_list[x].role = "Crewmate"
             player_list[x].is_alive = True
@@ -311,10 +382,10 @@ async def choose_imposter(guild):
             player_list[x].vote_available = False
             player_list[x].door_cooldown = game_settings.door_time_crew
             player_list[x].meeting_cooldown = game_settings.meeting_cooldown
-            player_list[x].known_status = True
+            player_list[x].death_known = False
             await player_list[x].discord_handle.add_roles(guild.get_role(int(CREWMATE)))
             await player_list[x].discord_handle.create_dm()
-            await player_list[x].discord_handle.dm_channel.send("You are a crewmate, all your actions will be done from this private message channel. Tasks should arrive momentarily")
+            await player_list[x].discord_handle.dm_channel.send(".\n\n\n\n\n\n\n\n\n\nYou are a crewmate, all your actions will be done from this private message channel. Tasks should arrive momentarily")
     global kills_needed
     kills_needed = len(crew_list) - 1
     global crewmates_alive
@@ -322,20 +393,22 @@ async def choose_imposter(guild):
 
 #Sends the list of tasks to a crewmate
 async def send_tasks(crewmate):
-    await crewmate.discord_handle.create_dm()
-    task_string = "Tasks Remaining:\n"
+    print("Sending tasks to " + crewmate.name)
+    task_string = "\n\n\n\nTasks Remaining:\n"
     for task in crewmate.tasks:
         if not task.is_complete():
-            task_string = task_string + task.name + " [" + task.short_name + "] " + task.get_current_location + task.get_task_status + "\n"
+            task_string = task_string + task.name + " [" + task.short_name + "] " + task.get_current_location() + " " + task.get_task_status() + "\n"
     await crewmate.discord_handle.dm_channel.send(task_string)
 
 #Sends tasks to every crewmate
 async def send_tasks_to_all():
+    print("Sending all crewmates their tasks...")
     for crewmate in crew_list:
         await send_tasks(crewmate)
 
 #Chooses tasks for the crewmates
 async def apportion_tasks(guild):
+    print("Choosing tasks")
     global tasks_total, tasks_remaining, tasks_completed
     tasks_total = len(crew_list) * game_settings.task_count
     tasks_remaining = len(crew_list) * game_settings.task_count
@@ -352,12 +425,13 @@ async def apportion_tasks(guild):
         for player in imposters:
             sendstr = sendstr + player.name + " (" + player.color + ")\n"
         await player.discord_handle.dm_channel.send(sendstr)
-    
+
 #Starts the cooldowns and sends the okay to move
 async def send_start_set_timers():
+    print("Resetting timers and sending go signal")
     set_sabotoge_time()
     for player in imposters:
-        player.set_kill_time(time.time())
+        player.last_kill_time = time.time()
         player.last_door_time = time.time()
         player.last_meeting_time = time.time()
         await player.discord_handle.dm_channel.send("Sabotoge and kill timers reset, go fake some tasks!")
@@ -376,11 +450,10 @@ oxygen_o2 = False
 last_sabotage_time = 0
 kills_needed = 0
 crewmates_alive = 0
+imposters_alive = 0
 
 def reactor_meltdown():
     print("reactor melting")
-    time.sleep(5)
-    print("Five seconds elapsed")
 
 def deplete_oxygen():
     print("Oxygen depleting")
@@ -397,13 +470,13 @@ def get_sabotoge_time():
     return time.time() - last_sabotage_time
 
 def get_kill_time(player):
-    return time.time() - last_kill_time
+    return player.get_kill_time_remaining()
 
 def sabotoge_allowed():
     return get_sabotoge_time() > game_settings.sabotoge_cooldown
 
 def kill_allowed(player):
-    return get_kill_time(player) > game_settings.kill_cooldown
+    return player.get_kill_time_remaining() <= 0
 
 def get_sabotoge_time_remaining():
     return game_settings.sabotoge_cooldown - get_sabotoge_time()
@@ -412,25 +485,33 @@ def get_kill_time_remaining(player):
     return game_settings.kill_cooldown - get_sabotoge_time()
 
 async def kill_victim(imposter, victim_name):
+    print("Attempting victim kill")
     for player in crew_list:
         if player.name == victim_name:
-            if player.is_alive():
+            if player.alive:
                 player.alive = False
+                global kills_needed
                 kills_needed = kills_needed - 1
+                print("Kill success -> " + str(kills_needed) + " kills remaining")
                 victim_player = get_player_by_name(victim_name)
                 await victim_player.discord_handle.send("You have been killed! Don't worry, you can still complete your tasks")
-                await imposter.dm_channel.send("Killing of " + victim_name + " recorded")
+                await imposter.discord_handle.dm_channel.send("Killing of " + victim_name + " recorded")
                 if kills_needed == 0:
-                    end_game(True, bot.get_guild(int(GUILD)))
+                    end_game(True)
                 set_kill_time(imposter)
                 return
             else:
                 await imposter.dm_channel.send("Player already dead")
                 return
-    await imposter.dm_channel.send("No player by that name in the game, type !roster to get player names")
+    await imposter.discord_handle.dm_channel.send("No player by that name in the game, type !roster to get player names")
 
-def end_game(imposter_victory, guild):
-    pass
+async def end_game(imposter_victory):
+    for player in player_list:
+        if imposter_victory:
+            await player.discord_handle.dm_channel.send("The imposter(s) won! Return to the lobby channel as the game resets!")
+        else:
+            await player.discord_handle.dm_channel.send("The crew won! Return to the lobby channel as the game resets!")
+    await reset_lobby()
 
 #Crew related code
 tasks_completed = 0
@@ -445,8 +526,117 @@ def get_known_crew_remaining():
 def get_task_total_status():
     return str(tasks_completed) + "/" + str(tasks_total)
 
-#Meeting related code
-votes = []
+#Sends the votes against this player to all players
+async def send_player_votes(crewmate):
+    for player in player_list:
+        await player.discord_handle.dm_channel.send(str(crewmate.votes_against) + " vote(s) for " + crewmate.name)
+
+#Sends everyone a notification that a player has voted
+async def alert_vote(caster):
+    global casted_votes
+    cast_string = "\n------------------------------\n"
+    cast_string = cast_string + caster.name + " voted!\n"
+    cast_string = cast_string + str(get_players_alive() - casted_votes) + " remaining\n"
+    cast_string = cast_string + "------------------------------\n"
+    for player in player_list:
+        await player.discord_handle.dm_channel.send(cast_string)
+
+#Sends each player a notification of who was expelled and if they were the imposter
+async def send_expelled(expelled):
+    infostr = expelled.name
+    if expelled.role == "Imposter":
+        infostr = infostr + " was an IMPOSTER"
+    else:
+        infostr = infostr + " was NOT an imposter"
+    for player in player_list:
+        await player.discord_handle.dm_channel.send(expelled.name + " was launched out the airlock")
+        await player.discord_handle.dm_channel.send(infostr)
+
+#Sends each player a notification that the vote was skipped
+async def send_voting_skipped():
+    for player in player_list:
+        await player.discord_handle.dm_channel.send("Voting was skipped")
+
+#Counts the votes, expells a player, ends the meeting, resets all timers
+async def count_votes():
+    global meeting_status, voting_active
+    if meeting_status == False:
+        print("Function called early by all players voting!")
+    print("Tallying votes")
+    meeting_status = False
+    voting_active = False
+    max_vote = 0
+    expelled = None
+    for player in player_list:
+        if player.votes_against > 0:
+            await send_player_votes(player)
+            if player.votes_against > max_vote:
+                max_vote = player.votes_against
+                expelled = player
+    for crew in player_list:
+        if skipped_votes > 0:
+            await crew.discord_handle.dm_channel.send(str(skipped_votes) + " votes to skip")
+    if max_vote > skipped_votes:
+        expelled.death_known = True
+        await send_expelled(expelled)
+        if expelled.role == "Imposter":
+            global imposters_alive
+            imposters_alive = imposters_alive - 1
+            if imposters_alive == 0:
+                await end_game(False)
+                return
+        else:
+            global kills_needed
+            kills_needed = kills_needed - 1
+            if kills_needed == 0:
+                await end_game(True)
+                return
+    else:
+        await send_voting_skipped()
+    await send_tasks_to_all()
+    await send_start_set_timers()
+
+#Sends a warning to all players that haven't voted that they now need to vote
+async def send_vote_warning():
+    for player in player_list:
+        if player.vote_available == True and player.alive == True:
+            await player.discord_handle.dm_channel.send("10 Seconds remaining to vote!")
+
+#Announces to all living players that they can send in their vote
+async def announce_voting_period():
+    print("Starting voting")
+    global voting_active
+    voting_active = True
+    global voting_timer, warning_timer, casted_votes, skipped_votes
+    skipped_votes = 0
+    casted_votes = 0
+    for player in player_list:
+        if player.alive == True:
+            player.vote_available = True
+            await player.discord_handle.dm_channel.send("Voting now active! Cast your vote using `!vote [name]`")
+        else:
+            await player.discord_handle.dm_channel.send("Living players are now voting!")
+    voting_timer = AsyncTimer(game_settings.meeting_voting_time, count_votes)
+    warning_timer = AsyncTimer(game_settings.meeting_voting_time - 10, send_vote_warning)
+
+#Announces to all living players they can talk
+async def announce_discussion_period():
+    print("Start discussion")
+    for player in player_list:
+        if player.alive == True:
+            await player.discord_handle.dm_channel.send("Discussion period has started, sus out the imposter!")
+        else:
+            await player.discord_handle.dm_channel.send("Living players are now discussing!")
+    print("Sent all discussion notifications")
+    AsyncTimer(game_settings.meeting_discussion_time, announce_voting_period)
+
+#Controls a meeting with timing info
+def start_meeting_timers():
+    print("Meeting started")
+    for player in player_list:
+        if (not player.alive) and (not player.death_known):
+            player.death_known = True
+    AsyncTimer(game_settings.meeting_return_time, announce_discussion_period)
 
 @bot.event
 async def on_ready():
@@ -478,13 +668,13 @@ async def help_command(ctx):
         helpstr = helpstr + "`!info` -> displays info on the number of known crewmates remaining and the status of task completion across the ship\n"
         helpstr = helpstr + "`!roster` -> displays the roster with colors and known status\n"
         helpstr = helpstr + "`!tasks` -> displays a list of your remaining tasks\n"
-        helpstr = helpstr + "`!inst [taskname]` -> gives instructions on the current step of the task\n"
+        helpstr = helpstr + "`!how [taskname]` -> gives instructions on the current step of the task\n"
         helpstr = helpstr + "`!complete [taskname]`-> completes the next step of the task using the shortname of the task\n"
         helpstr = helpstr + "`!body [color]` -> reports a body using the color of the dead marker\n"
         helpstr = helpstr + "`!meeting` -> calls an emergency meeting if available\n"
         helpstr = helpstr + "`!vote [name]` OR `!vote [color]` -> only available during voting periods, allows you to vote for a person (or their color) to be booted from the ship\n"
-        helpstr = helpstr + "`!reactor1` OR `!reactor2` -> use when fixing the reactor, only use the one correctly corresponding to your position\n"
-        helpstr = helpstr + "`!oxygen1` OR `!oxygen2` -> use when fixing the reactor, only use the one correctly corresponding to your position`\n"
+        helpstr = helpstr + "`!reactortop` OR `!reactorbot` -> use when fixing the reactor, only use the one correctly corresponding to your position\n"
+        helpstr = helpstr + "`!oxygena` OR `!oxygenb` -> use when fixing the reactor, only use the one correctly corresponding to your position`\n"
         await ctx.channel.send(helpstr)
         return
 
@@ -497,11 +687,38 @@ async def help_command(ctx):
         helpstr = helpstr + "`!time` to see how long before you can initiate a sabotoge or kill another crewmate"
         await ctx.channel.send(helpstr)
 
+    #Catch error commands for other private messages
+    if ctx.channel.type == discord.ChannelType.private:
+        return
+
     if ctx.channel.name == "discussion":
         pass
 
     if ctx.channel.name == "lobby":
         pass
+
+    if ctx.channel.name == "game-commands":
+        command_list = "Commands:\n"
+        command_list = command_list + "`!lobby` to create a fresh lobby\n"
+        command_list = command_list + "`!start` to start the game from the current lobby\n"
+        command_list = command_list + "`!set` to change game settings. The options are\n"
+        command_list = command_list + \
+            "\t`!set imposters [num]` to set the number of imposters\n"
+        command_list = command_list + \
+            "\t`!set tasks [num]` to set the number of imposters\n"
+        command_list = command_list + \
+            "\t`!set meetings [num]` to set the number of meetings each player can call\n"
+        command_list = command_list + \
+            "\t`!set k_cool [num]` to set the number of imposters\n"
+        command_list = command_list + \
+            "\t`!set s_cool [num]` to set the cooldown for sabotoges\n"
+        command_list = command_list + \
+            "\t`!set d_cool_crew [num]` to set the cooldown for crew to open doors\n"
+        command_list = command_list + \
+            "\t`!set d_cool_imposter [num]` to set the cooldown for imposters to close doors\n"
+        command_list = command_list + \
+            "\t`!set m_cool [num]` to set the cooldown for meetings\n"
+        await ctx.channel.send(command_list)
 
     if ctx.channel.name == "dev-command-tests":
         pass
@@ -510,68 +727,228 @@ async def help_command(ctx):
 @bot.command(name='info')
 async def info_command(ctx):
     if is_crew_command(ctx):
-        await ctx.message.channel.send(get_known_crew_remaining() + " crewmates alive")
-        await ctx.message.channel.send(get_task_total_status() + " tasks")
+        global meeting_status
+        if meeting_status == True:
+            await ctx.channel.send("Can't do that during a meeting!")
+            return
+        await ctx.channel.send(get_known_crew_remaining() + " crewmates alive")
+        await ctx.channel.send(get_task_total_status() + " tasks")
         return
 
 #Display all of the players, colors, and known status in the game
 @bot.command(name='roster')
 async def roster_command(ctx):
-    await send_roster(ctx.channel)
+    if is_imposter_command(ctx):
+        await send_roster(ctx.channel, True)
+    else:
+        caller = get_player_by_handle(ctx.author)
+        if caller.alive:
+            await send_roster(ctx.channel, False)
+        else:
+            await send_roster(ctx.channel, True)
 
 #Check your task list (!tasks)
 @bot.command('tasks')
 async def tasks_command(ctx):
     if is_crew_command(ctx):
+        global meeting_status
+        if meeting_status == True:
+            await ctx.channel.send("Can't do that during a meeting!")
+            return
         await send_tasks(get_player_by_handle(ctx.author))
 
-#Get instructions on a task (!task [name])
-#Here you can report finishing a task (!complete [name])
-#This is where people can report a dead body (!body)
-#This is where people can call an emergency meeting (x1) (!meeting)
-#Here we will handle voting (!vote)
-#Handle reactor meltdown (!reactor1 or !reactor2)
-#Handle oxygen depletion (!oxygen1 or !oxygen2)
+#Get details on how to do a task
+@bot.command('how')
+async def task_instructions_command(ctx):
+    if is_crew_command(ctx):
+        global meeting_status
+        if meeting_status == True:
+            await ctx.channel.send("Can't do that during a meeting!")
+            return
+        taskname = ctx.message.content.split()[1]
+        crewmate = get_player_by_handle(ctx.author)
+        for task in crewmate.tasks:
+            if task.short_name == taskname:
+                await ctx.author.dm_channel.send(task.get_instruction())
 
-#TODO kills and sabotoges need to be player specific for multiple imposters
+#Here you can report finishing a task
+@bot.command('complete')
+async def task_completion_command(ctx):
+    if is_crew_command(ctx):
+        global meeting_status
+        if meeting_status == True:
+            await ctx.channel.send("Can't do that during a meeting!")
+            return
+        taskname = ctx.message.content.split()[1]
+        crewmate = get_player_by_handle(ctx.author)
+        for task in crewmate.tasks:
+            if task.short_name == taskname:
+                task.complete_step()
+                global tasks_completed
+                tasks_completed = tasks_completed + 1
+                await ctx.author.dm_channel.send("Task completion recorded")
+                await send_tasks(crewmate)
+
+#This is where people can report a dead body (!body)
+@bot.command('body')
+async def body_report_command(ctx):
+    if is_crew_command(ctx) or is_imposter_command(ctx):
+        global meeting_status
+        if meeting_status == True:
+            await ctx.channel.send("Can't do that during a meeting!")
+            return
+        crewmate = get_player_by_handle(ctx.author)
+        body = get_player_by_color(ctx.message.content.split()[1])
+        if body == None:
+            await ctx.channel.send("No player with that color!")
+            return
+        if (body.alive):
+            await ctx.channel.send("Check your reporting, make sure you have the right color")
+            return
+        body.death_known = True
+        meeting_status = True
+        await ctx.channel.send("Body reported, calling a meeting!")
+        for player in player_list:
+            meeting_string = "A body has been reported!\n"
+            meeting_string = meeting_string + crewmate.name + " reported the body of " + body.name + "!\n"
+            meeting_string = meeting_string + "You have " + str(game_settings.meeting_return_time) + " seconds to return to the command console"
+            await player.discord_handle.dm_channel.send(meeting_string)
+        start_meeting_timers()
+
+#This is where people can report a dead body (!body)
+@bot.command('meeting')
+async def call_meeting_command(ctx):
+    if is_crew_command(ctx) or is_imposter_command(ctx):
+        global meeting_status
+        if meeting_status == True:
+            await ctx.channel.send("Can't do that during a meeting!")
+            return
+        crewmate = get_player_by_handle(ctx.author)
+        if crewmate.meeting_allowed():
+            crewmate.meetings = crewmate.meetings - 1
+            meeting_status = True
+            await ctx.channel.send("Meeting success, alerting others!")
+            for player in player_list:
+                meeting_string = "An emergency meeting has been called by " + crewmate.name + "!\n"
+                meeting_string = meeting_string + "You have " + str(game_settings.meeting_return_time) + " seconds to return to the command console"
+                await player.discord_handle.dm_channel.send(meeting_string)
+            start_meeting_timers()
+        else:
+            if crewmate.meetings == 0:
+                await crewmate.discord_handle.dm_channel.send("You are out of emergency meetings!")
+            else:
+                await crewmate.discord_handle.dm_channel.send("You must wait {:.0f} more seconds before you can call a meeting".format(crewmate.get_meeting_remaining()))
+
+#Here we will handle voting (!vote)
+@bot.command('vote')
+async def vote_command(ctx):
+    if is_crew_command(ctx) or is_imposter_command(ctx):
+        caster = get_player_by_handle(ctx.author)
+        if (not voting_active):
+            await ctx.channel.send("Voting is not active at this time!")
+        if (not caster.alive):
+            await ctx.channel.send("Dead players are not allowed to vote!")
+        if (not caster.vote_available):
+            await ctx.channel.send("You have already casted your vote")
+        name = ctx.message.content.split()[1]
+        player_to_vote = get_player_by_name(name)
+
+        if name == "skip":
+            await ctx.channel.send("You voted to skip!")
+            global skipped_votes
+            skipped_votes = skipped_votes + 1   
+        elif player_to_vote == None:
+            await ctx.channel.send("Invalid name. Use `!vote [name]` or `!vote skip`\nYou can check player names with `!roster`")
+            return
+        else:
+            player_to_vote.votes_against = player_to_vote.votes_against + 1
+        
+        caster.vote_available = False
+        global casted_votes, meeting_status
+        casted_votes = casted_votes + 1
+
+        await alert_vote(caster)
+        if casted_votes == get_players_alive():
+            meeting_status = False
+            warning_timer.cancel()
+            voting_timer.cancel()
+            await count_votes()
+
+#Handle reactor meltdown (!reactortop or !reactorbot)
+@bot.command('reactortop')
+async def reactor_top_command(ctx):
+    if is_crew_command(ctx) or is_imposter_command(ctx):
+        pass
+@bot.command('reactorbot')
+async def reactor_bot_command(ctx):
+    if is_crew_command(ctx) or is_imposter_command(ctx):
+        pass
+
+#Handle oxygen depletion (!oxygena or !oxygenb)
+@bot.command('oxygena')
+async def oxygen_a_command(ctx):
+    if is_crew_command(ctx) or is_imposter_command(ctx):
+        pass
+@bot.command('oxygenb')
+async def oxygen_b_command(ctx):
+    if is_crew_command(ctx) or is_imposter_command(ctx):
+        pass
+
+#Handle opening and closing of doors
+@bot.command('door')
+async def door_command(ctx):
+    if is_imposter_command(ctx) and (not meeting_status):
+        imposter = get_player_by_handle(ctx.author)
+        if imposter.door_allowed():
+            imposter.last_door_time = time.time()
+            await ctx.channel.send("Door closure confirmed")
+        else:
+            await ctx.channel.send("You have {:.0f} seconds remaining before you can close a door".format(imposter.get_door_remaining()))
+    if is_crew_command(ctx) and (not meeting_status):
+        crew = get_player_by_handle(ctx.author)
+        if crew.door_allowed():
+            crew.last_door_time = time.time()
+            await ctx.channel.send("Door opening confirmed")
+        else:
+            await ctx.channel.send("You have {:.0f} seconds remaining before you can open a door".format(crew.get_door_remaining()))
 
 #Initiate a reactor meltdown if available
 @bot.command('reactor')
 async def reactor_meltdown_command(ctx):
     if is_imposter_command(ctx):
-        if sabotoge_allowed():
+        if sabotoge_allowed() and (not meeting_status):
             reactor_meltdown()
             set_sabotoge_time()
             for player in player_list:
                 await player.discord_handle.dm_channel.send("\n\n\nReactor meltdown immenent!\n\n\n")
         else:
-            await ctx.channel.send(str(get_sabotoge_time_remaining()) + " seconds before sabotoge is available")
+            await ctx.channel.send("You must wait {:.0f} more seconds before you can sabotoge".format(get_sabotoge_time_remaining()))
 
 #Initiate oxygen depletion if available
 @bot.command('oxygen')
 async def oxygen_depletion_command(ctx):
-    if is_imposter_command(ctx):
+    if is_imposter_command(ctx) and (not meeting_status):
         if sabotoge_allowed():
             set_sabotoge_time()
             deplete_oxygen()
             for player in player_list:
                 await player.discord_handle.dm_channel.send("\n\n\nOxygen depletion immenent!\n\n\n")
         else:
-            await ctx.channel.send(str(get_sabotoge_time_remaining()) + " seconds before sabotoge is available")
+            await ctx.channel.send("You must wait {:.0f} more seconds before you can sabotoge".format(get_sabotoge_time_remaining()))
 
 #Claim a kill and record it to the list
 @bot.command('kill')
 async def kill_command(ctx):
-    if is_imposter_command(ctx):
+    if is_imposter_command(ctx) and (not meeting_status):
         imposter = get_player_by_handle(ctx.author)
         if kill_allowed(imposter):
-            victim = ctx.message.content.split("!kill")[1]
+            victim = ctx.message.content.split()[1]
             if victim == "":
                 await ctx.channel.send("You must mention the player you killed, try again!")
                 return
-            kill_victim(get_player_by_handle(ctx.author), victim)             
+            await kill_victim(get_player_by_handle(ctx.author), victim)
         else:
-            await ctx.channel.send(str(get_kill_time_remaining(imposter)) + " seconds before kills are allowed")
+            await ctx.channel.send("You must wait {:.0f} more seconds before you can kill".format(get_kill_time_remaining(imposter)))
 
 #Displays information on the time before players can do certain tasks
 @bot.command('time')
@@ -590,7 +967,7 @@ async def time_command(ctx):
             await ctx.channel.send("Emergency meeting ready!")
         else:
             await ctx.channel.send(str(imposter.get_meeting_remaining()) + " seconds before meeting is available")
-        if imposter.door_allowed():   
+        if imposter.door_allowed():
             await ctx.channel.send("Door closing ready!")
         else:
             await ctx.channel.send(str(imposter.get_door_remaining()) + " seconds before door closing is available")
@@ -602,36 +979,20 @@ async def time_command(ctx):
             await ctx.channel.send("Emergency meeting ready!")
         else:
             await ctx.channel.send(str(imposter.get_meeting_remaining()) + " seconds before meeting is available")
-        if crewmate.door_allowed():   
+        if crewmate.door_allowed():
             await ctx.channel.send("Door open ready!")
         else:
             await ctx.channel.send(str(imposter.get_door_remaining()) + " seconds before door opening is available")
 
-
-'''
-@bot.event
-async def on_message(message):
-    #Imposter commands
-    if message.channel.name == "imposter":
-
-        #Display how long until the user can initiate the next sabotoge
-        if message.content == "!time":
-            if sabotoge_allowed():
-                await message.channel.send("Sabotoge ready!")
-            else:
-                await message.channel.send(str(get_sabotoge_time_remaining()) + " seconds before sabotoge is available")
-            if kill_allowed():
-                await message.channel.send("Kill ready!")
-            else:
-                await message.channel.send(str(get_kill_time_remaining()) + " seconds before kills are allowed")
-        return
-
-    if message.content=="!lobby" and message.channel.name == "game-commands":
+#Starts a fresh lobby
+@bot.command('lobby')
+async def lobby_create_command(ctx):
+    if ctx.channel.name == "game-commands":
         #Feedback for lobby creation
         print("Creating lobby")
-        await message.channel.send("Lobby starting!")
+        await ctx.channel.send("Lobby created!")
         refresh_game_settings()
-        guild = client.get_guild(int(GUILD))
+        guild = bot.get_guild(int(GUILD))
 
         #Clear colors
         clear_colors()
@@ -642,80 +1003,92 @@ async def on_message(message):
 
         #Clean the lobby chat
         lobby = guild.get_channel(int(LOBBY))
-        await clean_lobby_chat(lobby)
+        await clean_chat(lobby)
 
         #Announce lobby prepared
         general = guild.get_channel(int(GENERAL))
-        await general.send("Lobby started! Type \"!join\" to join the lobby.")
+        await general.send("Lobby created! Type `!join [name]` to join the lobby.")
         return
 
-    #Game setting commands
-    if message.channel.name == "game-commands" and "!set" in message.content:
-        command = message.content.split()
-        if command[1] == "imposters":
-            set_game(imposters=int(command[2]))
-            await message.guild.get_channel(int(LOBBY)).send("Imposter count set to " + command[2])
+#Game setting commands
+@bot.command('set')
+async def settings_command(ctx):
+    if ctx.channel.name == "game-commands":
+        request = ctx.message.content.split()
+        if request[1] == "imposters":
+            set_game(imposters=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Imposter count set to " + request[2])
             return
-        if command[1] == "tasks":
-            set_game(tasks=int(command[2]))
-            await message.guild.get_channel(int(LOBBY)).send("Task count set to " + command[2])
+        if request[1] == "tasks":
+            set_game(tasks=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Task count set to " + request[2])
             return
-        if command[1] == "s_cool":
-            set_game(s_cool=int(command[2]))
-            await message.guild.get_channel(int(LOBBY)).send("Sabotoge count set to " + command[2])
+        if request[1] == "s_cool":
+            set_game(s_cool=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Sabotoge count set to " + request[2])
             return
-        if command[1] == "k_cool":
-            set_game(k_cool=int(command[2]))
-            await message.guild.get_channel(int(LOBBY)).send("Kill cooldown set to " + command[2])
+        if request[1] == "k_cool":
+            set_game(k_cool=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Kill cooldown set to " + request[2])
+            return
+        if request[1] == "d_cool_crew":
+            set_game(d_cool_crew=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Door cooldown for crewmates set to " + request[2])
+            return
+        if request[1] == "d_cool_imposter":
+            set_game(d_cool_imposter=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Door cooldown for imposters set to " + request[2])
+            return
+        if request[1] == "m_count":
+            set_game(m_count=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Meeting count set to " + request[2])
+            return
+        if request[1] == "m_cool":
+            set_game(m_cool=int(request[2]))
+            await ctx.guild.get_channel(int(LOBBY)).send("Meeting cooldown set to " + request[2])
             return
 
-    #Game command help
-    if message.channel.name == "game-commands" and message.content == "!help":
-        command_list = ""
-        command_list = command_list + "!lobby to create a fresh lobby\n"
-        command_list = command_list + "!start to start the game from the current lobby\n"
-        command_list = command_list + "!set to change game settings. The options are\n"
-        command_list = command_list + "\t!set imposters [num] to set the number of imposters"
-        command_list = command_list + "\t!set tasks [num] to set the number of imposters"
-        command_list = command_list + "\t!set k_cool [num] to set the number of imposters"
-        command_list = command_list + "\t!set s_cool [num] to set the cooldown for sabotoges"
-        await message.channel.send(command_list)
-
-    #Starts a game with all members in the lobby
-    if message.content=="!start" and message.channel.name == "game-commands":
-        await message.guild.get_channel(int(LOBBY)).send("Starting Game")
-        await choose_imposter(message.guild)
-        await apportion_tasks(message.guild)
+#Game starting command, all players that have joined the lobby will be part of the game
+@bot.command('start')
+async def start_game_command(ctx):
+    if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "game-commands":
+        await choose_imposter(ctx.guild)
+        await apportion_tasks(ctx.guild)
         await send_tasks_to_all()
         await send_start_set_timers()
         return
 
-    #Allows a member to join the lobby pre-game
-    if "!join" in message.content and message.channel.name == "dev-command-tests":
-        name = message.content.split("!join")[1]
+ #Allows a member to join the lobby pre-game
+
+#Adds a player to the lobby, they will play when the start command is sent
+@bot.command('join')
+async def join_lobby_command(ctx):
+    if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "discussion":
+        name = ctx.message.content.split()[1]
         if name == "":
-            await message.channel.send("You must enter a name after join for the game")
+            await ctx.channel.send("You must enter a name after `!join`")
             return
-        await check_player_available(name, message.author, message.channel)
+        available = await check_player_available(name, ctx.author, ctx.channel)
+        if available == False:
+            return
 
         print("Adding " + name + " to the game")
-        if message.author.name != "Gersh":
-            await message.author.edit(nick=name)
+        if ctx.author.name != "Gersh":
+            await ctx.author.edit(nick=name)
         color = select_color()
-        add_player_to_lobby(Player_Data(message.author, name, color))
+        add_player_to_lobby(Player_Data(ctx.author, name, color))
 
-        await message.channel.send(name + " has been added to the game with color: " + color + "!")
-        role = discord.utils.get(message.guild.roles, name="Player")
-        await message.author.add_roles(role)
-        await send_roster(message.guild.get_channel(int(LOBBY)))
+        await ctx.guild.get_channel(int(LOBBY)).send(name + " has been added to the game with color: " + color + "!")
+        role = discord.utils.get(ctx.guild.roles, name="Player")
+        await ctx.author.add_roles(role)
+        await send_roster(ctx.guild.get_channel(int(LOBBY)), True)
         return
 
-    #The lobby channel is used for in game updates and discussion
-    if message.channel.name == "lobby":
-        #Here we will handle leaving the lobby
-        if message.content == "!leave":
-            await kick_player(message.author, message.guild)
-            return
-'''
+#Allows a player to leave the lobby
+@bot.command('leave')
+async def leave_lobby_command(ctx):
+    if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "lobby":
+        await kick_player(ctx.author, ctx.guild)
+        return
 
 bot.run(TOKEN)
