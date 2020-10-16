@@ -5,8 +5,10 @@ from dotenv import load_dotenv
 import random
 import time
 import copy
-from threading import Timer
+import asyncio
+from threading import Thread
 from asynctimer import AsyncTimer
+import socket
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -35,6 +37,7 @@ class GameSettings:
         self.meeting_return_time = 30
         self.meeting_discussion_time = 30
         self.meeting_voting_time = 60
+        self.reporting_type = "Manual" #TODO implement
 
 game_settings = GameSettings()
 meeting_status = False
@@ -285,10 +288,11 @@ async def send_roster(channel, full_visibility):
             sendstr = sendstr + " [Alive]\n"
     await channel.send(sendstr)
 
+#Resets the settings for the game and empties the list of active players
 def refresh_game_settings():
-    global game_settings
+    global game_settings, player_list
     game_settings = GameSettings()
-    player_list.clear()
+    player_list = []
 
 #Resets the colors
 def clear_colors():
@@ -302,26 +306,30 @@ def select_color():
     temp_color_list.remove(color)
     return color
 
+#Deletes all the chats from a channel
 async def clean_chat(channel):
     async for message in channel.history(limit=500):
         await message.delete()
 
-async def clear_roles(member, guild):
+#Removes all but the specified safe roles from a member
+async def clear_roles_from_member(member, guild):
     for role in member.roles:
         if role != guild.get_role(int(GUILD)) and role != guild.get_role(int(GAME_MASTER)) and role != guild.get_role(int(DEVELOPER)):
             await member.remove_roles(role)
             print("Removed " + role.name + " from " + member.name)
 
-async def clean_lobby_roles(members, guild):
+#Removes all but the safe roles from all of the members
+async def reset_roles(members, guild, safe_roles):
     for member in members:
         if member == bot.user:
             continue
 
         for role in member.roles:
-            if role != guild.get_role(int(GUILD)) and role != guild.get_role(int(GAME_MASTER)) and role != guild.get_role(int(DEVELOPER)):
+            if (not (role in safe_roles)):
                 await member.remove_roles(role)
                 print("Removed " + role.name + " from " + member.name)
 
+#Checks if the name is free and the player isn't already in the lobby
 async def check_player_available(name, handle, channel):
     for player in player_list:
         if player.name == name:
@@ -333,14 +341,16 @@ async def check_player_available(name, handle, channel):
                 return False
     return True
 
+#Places the player in the lobby with permission to access the channel
 def add_player_to_lobby(player_data):
     player_list.append(player_data)
 
+#Removes the player from the list and removes their access to the lobby
 async def kick_player(handle, guild):
     for index in range(len(player_list)):
         if player_list[index].discord_handle == handle:
             player_list.remove(player_list[index])
-            clear_roles(handle, guild)
+            clear_roles_from_member(handle, guild)
             await send_roster(guild.get_channel(LOBBY), True)
             return
 
@@ -350,12 +360,14 @@ async def reset_lobby():
     lobby_channel = bot.get_guild(int(GUILD)).get_channel(int(LOBBY))
     await clean_chat(lobby_channel)
     guild = bot.get_guild(int(GUILD))
-    for player in player_list:
-        player.tasks = []
-        for role in guild.roles:
-            if role != guild.get_role(int(GUILD)) and role != guild.get_role(int(GAME_MASTER)) and role != guild.get_role(int(DEVELOPER)) and role != guild.get_role(int(PLAYER)):
-                await player.discord_handle.remove_roles(role)
-                print("Removed " + role.name + " from " + player.name)
+    members = await guild.fetch_members()
+    safe_roles = [
+        guild.get_role(int(GUILD)),
+        guild.get_role(int(GAME_MASTER)),
+        guild.get_role(int(DEVELOPER)),
+        guild.get_role(int(PLAYER))
+    ]
+    reset_roles(members, guild, safe_roles)
     await lobby_channel.send("Lobby reset, start game when ready!")
 
 #Randomly chooses an imposter from the list of players and fills the crew list with other members
@@ -497,7 +509,7 @@ reactor_warning = None
 oxygen_timer = None
 oxygen_warning = None
 
-
+#Handles an attempt to fix the reactor at a location, records who is currently at that location for kill purposes
 async def fix_reactor(location, fixer):
     global reactor_top_fixed, reactor_bottom_fixed, reactor_timer, reactor_warning, reactor_bottom_player, reactor_top_player
     if (location == "Top"):
@@ -516,12 +528,14 @@ async def fix_reactor(location, fixer):
         return True
     return False
 
+#Sends the ten second warning to fix the reactor
 async def send_reactor_warning():
     global reactor_melting
     if (reactor_melting == True):
         for player in player_list:
             await player.discord_handle.dm_channel.send("Reactor meltdown in 10 seconds!!!")
 
+#Ends the game due to failure to fix the reactor meltdown
 async def send_reactor_melted():
     global reactor_melting
     reactor_melting = False
@@ -529,15 +543,27 @@ async def send_reactor_melted():
         await player.discord_handle.dm_channel.send("Reactor melted down. All crewmates died. IMPOSTERS WIN")
     await end_game("IMPOSTERS win with the death of all crewmates!")
 
+#Starts the process of reactor meltdown
 async def reactor_meltdown():
     print("Reactor melting")
     global reactor_timer, reactor_warning, reactor_melting
     for player in player_list:
         await player.discord_handle.dm_channel.send("Reactor is melting down! Fix before time runs out!")
     reactor_melting = True
+
+    #Send the data to the server
+    print("Connecting bot to server")
+    HOST = '172.16.18.150' 
+    PORT = 8771
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.connect((HOST, PORT))
+    server_sock.sendall(b'>-ReactorTop-MELTDOWN')
+    server_sock.close()
+
     reactor_warning = AsyncTimer(50, send_reactor_warning)
     reactor_timer = AsyncTimer(60, send_reactor_melted)
 
+#Handles an attempt to fix oxygen at the specified location
 async def fix_oxygen(location):
     global oxygen_a_fixed, oxygen_b_fixed, oxygen_timer, oxygen_warning
     if (location == "A"):
@@ -554,12 +580,14 @@ async def fix_oxygen(location):
         return True
     return False
 
+#Sends the ten second warning about the oxygen depletion levels
 async def send_oxygen_warning():
     global oxygen_depleting
     if (oxygen_depleting == True):
         for player in player_list:
             await player.discord_handle.dm_channel.send("Oxygen depletion in 10 seconds!!!")
 
+#Ends the game from depleted oxygen not being fixed
 async def send_oxygen_depleted():
     global oxygen_depleting
     oxygen_depleting = False
@@ -567,6 +595,7 @@ async def send_oxygen_depleted():
         await player.discord_handle.dm_channel.send("Oxygen depleted. All crewmates died. IMPOSTERS WIN")
     await end_game("IMPOSTERS win with the death of all crewmates!")
 
+#Begins the oxygen depletion sabotoge
 async def deplete_oxygen():
     print("Oxygen depleting")
     global oxygen_timer, oxygen_warning, oxygen_depleting
@@ -576,24 +605,34 @@ async def deplete_oxygen():
     oxygen_warning = AsyncTimer(50, send_oxygen_warning)
     oxygen_timer = AsyncTimer(60, send_oxygen_depleted)
 
+#Sets the sabotoges last time to the current time
 def set_sabotoge_time():
     global last_sabotage_time
     last_sabotage_time = time.time()
 
-def get_sabotoge_time():
+#Gets the time since the last sabotoge
+def get_sabotoge_time_elapsed():
     return time.time() - last_sabotage_time
 
+#Boolean function that returns whether or not sabotoge is ready
 def sabotoge_allowed():
-    return get_sabotoge_time() > game_settings.sabotoge_cooldown
+    return get_sabotoge_time_elapsed() > game_settings.sabotoge_cooldown
 
+#Checks how much time is left before an imposter can sabotoge
 def get_sabotoge_time_remaining():
-    return game_settings.sabotoge_cooldown - get_sabotoge_time()
+    return game_settings.sabotoge_cooldown - get_sabotoge_time_elapsed()
 
+#Handles the logic for killing another player
 async def kill_victim(imposter, victim_name):
     print("Attempting victim kill")
     for victim in crew_list:
         if victim.name == victim_name:
             if victim.alive:
+                #Ensure the kill isnt another imposter or themselves
+                if victim.role == "Imposter":
+                    await imposter.discord_handle.dm_channel.send("You can not kill imposters! (Including yourself!)")
+                    return
+
                 victim.alive = False
                 global kills_needed, reactor_melting
 
@@ -766,23 +805,9 @@ def start_meeting_timers():
 async def on_ready():
     #Display server info
     guild = bot.get_guild(int(GUILD))
-
     print(
         f'{bot.user} is connected to the following guild:\n'
         f'{guild.name}(id: {guild.id})')
-
-    print("Channels:")
-    for channel in guild.channels:
-        print("\t" + channel.name)
-
-    print("Roles:")
-    for role in guild.roles:
-        print("\t" + role.name)
-
-    print("Members:")
-    members = await guild.fetch_members(limit=150).flatten()
-    for member in members:
-        print("\t" + member.name)
 
 #Get information on supported commands using commands
 @bot.command(name='commands')
@@ -903,7 +928,6 @@ async def task_instructions_command(ctx):
             if task.short_name == taskname:
                 await ctx.author.dm_channel.send(task.get_instruction())
 
-#TODO full completion bugged
 #Here you can report finishing a task
 @bot.command('complete')
 async def task_completion_command(ctx):
@@ -917,7 +941,7 @@ async def task_completion_command(ctx):
         for task in crewmate.tasks:
             if task.short_name == taskname:
                 if task.complete_step() == True:
-                    global tasks_completed
+                    global tasks_completed, tasks_total
                     tasks_completed = tasks_completed + 1
                     await ctx.author.dm_channel.send("Task completion recorded")
                     await send_tasks(crewmate)
@@ -1193,7 +1217,12 @@ async def lobby_create_command(ctx):
 
         #Clear roles from users
         members = await guild.fetch_members(limit=150).flatten()
-        await clean_lobby_roles(members, guild)
+        safe_roles = [
+            guild.get_role(int(GUILD)),
+            guild.get_role(int(GAME_MASTER)),
+            guild.get_role(int(DEVELOPER))
+        ]
+        await reset_roles(members, guild, safe_roles)
 
         #Clean the lobby chat
         lobby = guild.get_channel(int(LOBBY))
@@ -1285,4 +1314,5 @@ async def leave_lobby_command(ctx):
         await kick_player(ctx.author, ctx.guild)
         return
 
+print("Running bot startup")
 bot.run(TOKEN)
