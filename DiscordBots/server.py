@@ -1,5 +1,5 @@
 import socket
-import discord()
+import discord
 from threading import Thread 
 from socketserver import ThreadingMixIn 
 import time
