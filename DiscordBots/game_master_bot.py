@@ -168,7 +168,7 @@ class Player_Data:
         self.name = name
         self.color = color
         self.role = "Player"
-        self.alive = True
+        self.is_alive = True
         self.death_known = False
         self.tasks = []
         self.meetings = 1
@@ -182,14 +182,11 @@ class Player_Data:
         self.last_meeting_time = time.time()
         self.last_kill_time = time.time()
 
-    def is_alive(self):
-        return self.alive
-
     def set_role(self, role):
         self.role = role
 
     def meeting_allowed(self):
-        if self.meetings > 0 and self.alive:
+        if self.meetings > 0 and self.is_alive:
             return self.get_meeting_remaining() <= 0
         return False
 
@@ -241,6 +238,19 @@ kills_needed = 0
 crewmates_alive = 0
 imposters_alive = 0
 
+#Makes a name all lower case with no more than 10 letters no spaces
+def clean_name(dirty_name):
+    lowered = dirty_name.lower()
+    newname = ""
+    i=0
+    for letter in lowered:
+        if letter.isalpha():
+            newname = newname + letter
+            i=i+1
+            if i==10:
+                break
+    return newname
+
 #Gets the player by their handle
 def get_player_by_handle(handle):
     global player_list
@@ -270,7 +280,7 @@ def get_players_alive():
     count = 0
     global player_list
     for player in player_list:
-        if player.alive:
+        if player.is_alive:
             count = count + 1
     return count
 
@@ -307,12 +317,7 @@ async def send_roster(channel, full_visibility):
     global player_list
     for player in player_list:
         sendstr = sendstr + "\t" + player.name + " (" + player.color + ")"
-        print(sendstr)
-        if player.alive:
-            print("Player is actually alive")
-        else:
-            print("Player is actually dead")
-        if (not player.alive) and (player.death_known or full_visibility):
+        if (not player.is_alive) and (player.death_known or full_visibility):
             sendstr = sendstr + " [Dead]\n"
         else:
             sendstr = sendstr + " [Alive]\n"
@@ -396,19 +401,19 @@ async def reset_lobby():
     lobby_channel = bot.get_guild(int(GUILD)).get_channel(int(LOBBY))
     await clean_chat(lobby_channel)
     guild = bot.get_guild(int(GUILD))
-    members = await guild.fetch_members()
+    members = await guild.fetch_members(limit=150).flatten()
     safe_roles = [
         guild.get_role(int(GUILD)),
         guild.get_role(int(GAME_MASTER)),
         guild.get_role(int(DEVELOPER)),
         guild.get_role(int(PLAYER))
     ]
-    reset_roles(members, guild, safe_roles)
+    await reset_roles(members, guild, safe_roles)
     await lobby_channel.send("Lobby reset, start game when ready!")
 
 #Randomly chooses an imposter from the list of players and fills the crew list with other members
 async def choose_imposter(guild):
-    global imposters, crew_list, imposters_alive
+    global imposters, crew_list, imposters_alive, player_list, game_settings
     imposters_alive = game_settings.imposter_count
     imposters = []
     imposter_indices = []
@@ -423,8 +428,8 @@ async def choose_imposter(guild):
             imposters[x].meetings = game_settings.meeting_count
             imposters[x].meeting_cooldown = game_settings.meeting_cooldown
             imposters[x].kill_cooldown = game_settings.kill_cooldown
-            imposters[x].is_alive = True
-            imposters[x].death_known = False
+            player_list[index].is_alive = True
+            player_list[index].death_known = False
             await imposters[x].discord_handle.add_roles(guild.get_role(int(IMPOSTER)))
             await imposters[x].discord_handle.create_dm()
             await imposters[x].discord_handle.dm_channel.send(".\n\n\n\n\n\n\n\n\n\nYou are an imposter, wait for the game to start")
@@ -561,7 +566,7 @@ async def fix_reactor(location, fixer):
         if reactor_warning != None:
             reactor_warning.cancel()
         for player in player_list:
-            await player.discord_handle.dm_channel.send("Reactor meltdown averted, return to your tasks")
+            await player.discord_handle.dm_channel.send(">\n\n-----------------------------------------\n|^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|\n|.......................................|\n|                                       |\n| Launch aborted. Return to your tasks! |\n|                                       |\n|.......................................|\n|^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|\n-----------------------------------------\n")
         return True
     return False
 
@@ -570,22 +575,32 @@ async def send_reactor_warning():
     global reactor_melting
     if (reactor_melting == True):
         for player in player_list:
-            await player.discord_handle.dm_channel.send("Reactor meltdown in 10 seconds!!!")
+            await player.discord_handle.dm_channel.send(">\n\n-------------------------\n| Launch in 10 seconds! |\n-------------------------")
 
 #Ends the game due to failure to fix the reactor meltdown
 async def send_reactor_melted():
     global reactor_melting
     reactor_melting = False
     for player in player_list:
-        await player.discord_handle.dm_channel.send("Reactor melted down. All crewmates died. IMPOSTERS WIN")
-    await end_game("IMPOSTERS win with the death of all crewmates!")
+        await player.discord_handle.dm_channel.send("--------------------------------------------------------\n| Return rocket launched. All astronauts are stranded. |\n--------------------------------------------------------\n")
+    await end_game(">\n\n------------------\n| IMPOSTERS win! |\n------------------")
 
 #Starts the process of reactor meltdown
 async def reactor_meltdown():
     print("Reactor melting")
     global reactor_timer, reactor_warning, reactor_melting
+    launchstr = ">\n\n"
+    launchstr = launchstr + "--------------------------------------------------------------\n"
+    launchstr = launchstr + "|XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX|\n"
+    launchstr = launchstr + "|////////////////////////////////////////////////////////////|\n"
+    launchstr = launchstr + "|                                                            |\n"
+    launchstr = launchstr + "| Launch sequence started. Abort it in the control room now! |\n"
+    launchstr = launchstr + "|                                                            |\n"
+    launchstr = launchstr + "|////////////////////////////////////////////////////////////|\n"
+    launchstr = launchstr + "|XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX|\n"
+    launchstr = launchstr + "--------------------------------------------------------------\n"
     for player in player_list:
-        await player.discord_handle.dm_channel.send("Reactor is melting down! Fix before time runs out!")
+        await player.discord_handle.dm_channel.send(launchstr)
     reactor_melting = True
 
     #Send the data to the server
@@ -623,23 +638,33 @@ async def fix_oxygen(location):
 async def send_oxygen_warning():
     global oxygen_depleting
     if (oxygen_depleting == True):
-        for player in player_list:
-            await player.discord_handle.dm_channel.send("Oxygen depletion in 10 seconds!!!")
+        for player in player_list:                                                         
+            await player.discord_handle.dm_channel.send(">\n\n-----------------------------------\n| Oxygen depletion in 10 seconds! |\n-----------------------------------")
 
 #Ends the game from depleted oxygen not being fixed
 async def send_oxygen_depleted():
     global oxygen_depleting
-    oxygen_depleting = False
-    for player in player_list:
-        await player.discord_handle.dm_channel.send("Oxygen depleted. All crewmates died. IMPOSTERS WIN")
-    await end_game("IMPOSTERS win with the death of all crewmates!")
+    oxygen_depleting = False                                                                   
+    for player in player_list:                                                                 
+        await player.discord_handle.dm_channel.send(">\n\n----------------------------------------\n| Oxygen depleted. All crewmates died. |\n----------------------------------------")
+    await end_game(">\n\n------------------\n| IMPOSTERS win! |\n------------------")
 
 #Begins the oxygen depletion sabotoge
 async def deplete_oxygen():
     print("Oxygen depleting")
     global oxygen_timer, oxygen_warning, oxygen_depleting
+    depletionstr = ">\n\n"
+    depletionstr = depletionstr + "-----------------------------------------------------\n"
+    depletionstr = depletionstr + "|XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX|\n"
+    depletionstr = depletionstr + "|///////////////////////////////////////////////////|\n"
+    depletionstr = depletionstr + "|                                                   |\n"
+    depletionstr = depletionstr + "| Airlocks opened! Close both before time runs out! |\n"
+    depletionstr = depletionstr + "|                                                   |\n"
+    depletionstr = depletionstr + "|///////////////////////////////////////////////////|\n"
+    depletionstr = depletionstr + "|XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX|\n"
+    depletionstr = depletionstr + "-----------------------------------------------------\n"
     for player in player_list:
-        await player.discord_handle.dm_channel.send("Oxygen is depleting! Fix before time runs out!")
+        await player.discord_handle.dm_channel.send(depletionstr)
     oxygen_depleting = True
     oxygen_warning = AsyncTimer(game_settings.oxygen_length-10, send_oxygen_warning)
     oxygen_timer = AsyncTimer(game_settings.oxygen_length, send_oxygen_depleted)
@@ -664,15 +689,16 @@ def get_sabotoge_time_remaining():
 #Handles the logic for killing another player
 async def kill_victim(imposter, victim_name):
     print("Attempting victim kill")
-    for victim in crew_list:
+    global player_list
+    for victim in player_list:
         if victim.name == victim_name:
-            if victim.alive:
+            if victim.is_alive:
                 #Ensure the kill isnt another imposter or themselves
                 if victim.role == "Imposter":
                     await imposter.discord_handle.dm_channel.send("You can not kill imposters! (Including yourself!)")
                     return
 
-                victim.alive = False
+                victim.is_alive = False
                 global kills_needed, reactor_melting
 
                 #Handle the case where the player was killed while fixing a reactor meltdown
@@ -691,7 +717,7 @@ async def kill_victim(imposter, victim_name):
                 await imposter.discord_handle.dm_channel.send("Killing of " + victim_name + " recorded")
 
                 #Alert the killed player of their updated status
-                await victim.discord_handle.send("You have been killed! Don't worry, you can still complete your tasks")
+                await victim.discord_handle.send(">\n\n---------------------------------------------\n|^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|\n|>>>   >>  You have been killed.   <<    <<<|\n| Don't worry you can still complete tasks! |\n|...........................................|\n---------------------------------------------\n")
 
                 #End the game if necessary
                 if kills_needed == 0:
@@ -703,7 +729,7 @@ async def kill_victim(imposter, victim_name):
             else:
                 await imposter.discord_handle.dm_channel.send("Player already dead")
                 return
-    await imposter.discord_handle.dm_channel.send("No player by that name in the game, type !roster to get player names")
+    await imposter.discord_handle.dm_channel.send("No player by that name in the game, type `.roster` to get player names")
 
 #Announces the end of the game and resets the lobby
 async def end_game(statement):
@@ -799,7 +825,7 @@ async def count_votes():
 #Sends a warning to all players that haven't voted that they now need to vote
 async def send_vote_warning():
     for player in player_list:
-        if player.vote_available == True and player.alive == True:
+        if player.vote_available == True and player.is_alive == True:
             await player.discord_handle.dm_channel.send("10 Seconds remaining to vote!")
 
 #Announces to all living players that they can send in their vote
@@ -811,7 +837,7 @@ async def announce_voting_period():
     skipped_votes = 0
     casted_votes = 0
     for player in player_list:
-        if player.alive == True:
+        if player.is_alive == True:
             player.vote_available = True
             await player.discord_handle.dm_channel.send("Voting now active! Cast your vote using `.vote [name]`")
         else:
@@ -823,7 +849,7 @@ async def announce_voting_period():
 async def announce_discussion_period():
     print("Start discussion")
     for player in player_list:
-        if player.alive == True:
+        if player.is_alive == True:
             await player.discord_handle.dm_channel.send("Discussion period has started, sus out the imposter!")
         else:
             await player.discord_handle.dm_channel.send("Living players are now discussing!")
@@ -834,7 +860,7 @@ async def announce_discussion_period():
 def start_meeting_timers():
     print("Meeting started")
     for player in player_list:
-        if (not player.alive) and (not player.death_known):
+        if (not player.is_alive) and (not player.death_known):
             player.death_known = True
             global crewmates_alive
             crewmates_alive = crewmates_alive - 1
@@ -945,7 +971,7 @@ async def roster_command(ctx):
         await send_roster(ctx.channel, True)
     else:
         caller = get_player_by_handle(ctx.author)
-        if caller.alive:
+        if caller.is_alive:
             await send_roster(ctx.channel, False)
         else:
             await send_roster(ctx.channel, True)
@@ -1012,7 +1038,7 @@ async def task_completion_command(ctx):
 @bot.command('body')
 async def body_report_command(ctx):
     if is_crew_command(ctx) or is_imposter_command(ctx):
-        if (not get_player_by_handle(ctx.author).alive):
+        if (not get_player_by_handle(ctx.author).is_alive):
             await ctx.channel.send("Dead people cannot report bodies!")
         global meeting_status
         if meeting_status == True:
@@ -1023,7 +1049,7 @@ async def body_report_command(ctx):
         if body == None:
             await ctx.channel.send("No player with that color!")
             return
-        if (body.alive):
+        if (body.is_alive):
             await ctx.channel.send("Check your reporting, make sure you have the right color")
             return
         if body.death_known:
@@ -1097,7 +1123,7 @@ async def vote_command(ctx):
         if (not voting_active):
             await ctx.channel.send("Voting is not active at this time!")
             return
-        if (not caster.alive):
+        if (not caster.is_alive):
             await ctx.channel.send("Dead players are not allowed to vote!")
             return
         if (not caster.vote_available):
@@ -1134,14 +1160,14 @@ async def vote_command(ctx):
 @bot.command('reactortop')
 async def reactor_top_command(ctx):
     if is_crew_command(ctx) or is_imposter_command(ctx) and (reactor_melting == True):
-        if (not get_player_by_handle(ctx.author).alive):
+        if (not get_player_by_handle(ctx.author).is_alive):
             await ctx.channel.send("Dead players cannot fix sabotoges!")
             return
         await fix_reactor("Top", get_player_by_handle(ctx.author))
 @bot.command('reactorbot')
 async def reactor_bot_command(ctx):
     if is_crew_command(ctx) or is_imposter_command(ctx) and (reactor_melting == True):
-        if (not get_player_by_handle(ctx.author).alive):
+        if (not get_player_by_handle(ctx.author).is_alive):
             await ctx.channel.send("Dead players cannot fix sabotoges!")
             return
         await fix_reactor("Bottom", get_player_by_handle(ctx.author))
@@ -1149,7 +1175,7 @@ async def reactor_bot_command(ctx):
 @bot.command('oxygena')
 async def oxygen_a_command(ctx):
     if is_crew_command(ctx) or is_imposter_command(ctx) and (reactor_melting == True):
-        if (not get_player_by_handle(ctx.author).alive):
+        if (not get_player_by_handle(ctx.author).is_alive):
             await ctx.channel.send("Dead players cannot fix sabotoges!")
             return
         is_fixed = await fix_oxygen("A")
@@ -1159,7 +1185,7 @@ async def oxygen_a_command(ctx):
 @bot.command('oxygenb')
 async def oxygen_b_command(ctx):
     if is_crew_command(ctx) or is_imposter_command(ctx) and (oxygen_depleting == True):
-        if (not get_player_by_handle(ctx.author).alive):
+        if (not get_player_by_handle(ctx.author).is_alive):
             await ctx.channel.send("Dead players cannot fix sabotoges!")
             return
         is_fixed = await fix_oxygen("B")
@@ -1349,6 +1375,7 @@ async def settings_command(ctx):
 @bot.command('start')
 async def start_game_command(ctx):
     if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "game-commands":
+        print("Starting game")
         await choose_imposter(ctx.guild)
         await apportion_tasks(ctx.guild)
         await send_tasks_to_all()
@@ -1361,7 +1388,7 @@ async def start_game_command(ctx):
 @bot.command('join')
 async def join_lobby_command(ctx):
     if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "discussion":
-        name = ctx.message.content.split()[1].lower()
+        name = clean_name(ctx.message.content.split()[1])
         if name == "":
             await ctx.channel.send("You must enter a name after `.join`")
             return
