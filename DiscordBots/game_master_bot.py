@@ -169,10 +169,10 @@ master_task_list = [
 ]
 
 class Player_Data:
-    def __init__(self, discord_handle, name, color):
+    def __init__(self, discord_handle, name, nation):
         self.discord_handle = discord_handle
         self.name = name
-        self.color = color
+        self.nation = nation
         self.role = "Player"
         self.is_alive = True
         self.death_known = False
@@ -223,18 +223,38 @@ class Player_Data:
     def set_kill_time(self, time_in):
         self.last_kill_time = time_in
 
-color_list = [
-    "red",
-    "green",
-    "cyan",
-    "yellow",
-    "brown",
-    "blue",
-    "pink",
-    "orange",
-    "lime",
-    "black",
-    "white"
+nation_dict = {
+    "asa" : {"color": "white", "nation": "australia", "flag": ":flag_au:"},
+    "cnsa" : {"color": "yellow", "nation": "china", "flag": ":flag_cn:"},
+    "esa" : {"color": "blue", "nation": "europe", "flag": ":flag_eu:"},
+    "iran" : {"color": "green", "nation": "iran", "flag": ":flag_ir:"},
+    "isa" : {"color": "cyan", "nation": "israel", "flag": ":flag_il:"},
+    "asi" : {"color": "purple", "nation": "italy", "flag": ":flag_it:"},
+    "kcst" : {"color": "orange", "nation": "northkorea", "flag": ":flag_kp:"},
+    "kari" : {"color": "brown", "nation": "southkorea", "flag": ":flag_kr:"},
+    "isro" : {"color": "black", "nation": "india", "flag": ":flag_in:"},
+    "jaxa" : {"color": "magenta", "nation": "japan", "flag": ":flag_jp:"},
+    "nasa" : {"color": "pink", "nation": "usa", "flag": ":flag_us:"},
+    "cnes" : {"color": "lime", "nation": "france", "flag": ":flag_fr:"},
+    "ssau" : {"color": "navy", "nation": "ukraine", "flag": ":flag_ua:"},
+    "ros" : {"color": "tan", "nation": "russia", "flag": ":flag_ru:"},
+}
+
+nation_list = [
+    "asa", #Australia
+    "cnsa", #China 
+    "esa", #Europe
+    "iran", #Iran
+    "isa", #Israel
+    "asi", #Italy
+    "kcst", #North Korea
+    "kari", #South Korea
+    "isro", #India
+    "jaxa", #Japan
+    "nasa", #USA
+    "cnes", #France
+    "ssau", #Ukraine
+    "ros", #Russia
 ]
 player_list = []
 crew_list = []
@@ -273,11 +293,11 @@ def get_player_by_name(name):
             return player
     return None
 
-#Gets the player based on their color
-def get_player_by_color(color):
+#Gets the player based on their nation
+def get_player_by_color(nation):
     global player_list
     for player in player_list:
-        if player.color == color:
+        if player.nation == nation:
             return player
     return None
 
@@ -322,11 +342,11 @@ async def send_roster(channel, full_visibility):
     sendstr = "Roster:\n"
     global player_list
     for player in player_list:
-        sendstr = sendstr + "\t" + player.name + " (" + player.color + ")"
+        sendstr = sendstr + "\t" + player.name + " " + nation_dict[player.nation]["flag"] + " (" + player.nation + ") "
         if (not player.is_alive) and (player.death_known or full_visibility):
-            sendstr = sendstr + " [Dead]\n"
+            sendstr = sendstr + " :skull:\n"
         else:
-            sendstr = sendstr + " [Alive]\n"
+            sendstr = sendstr + " :heart:\n"
     await channel.send(sendstr)
 
 #Resets the settings for the game and empties the list of active players
@@ -338,20 +358,22 @@ def refresh_game_settings():
 #Resets the colors
 def clear_colors():
     global temp_color_list
-    temp_color_list = copy.deepcopy(color_list)
+    temp_color_list = copy.deepcopy(nation_list)
 
-#Selects a random color for the player
+#Selects a random nation for the player
 def select_color():
-    global color_list, player_list
-    color = ""
+    global nation_list, player_list
+    nation = ""
     while True:
-        index = random.randrange(0, len(color_list))
-        color = color_list[index]
+        found = False
+        index = random.randrange(0, len(nation_list))
+        nation = nation_list[index]
         for player in player_list:
-            if player.color == color:
-                continue
-        break
-    return color
+            if player.nation == nation:
+                found = True
+        if not found:
+            break
+    return nation
 
 #Deletes all the chats from a channel
 async def clean_chat(channel):
@@ -515,7 +537,7 @@ async def apportion_tasks(guild):
         imposter.tasks = []
         sendstr = "The Imposters are:\n"
         for imp in imposters:
-            sendstr = sendstr + imp.name + " (" + imp.color + ")\n"
+            sendstr = sendstr + imp.name + " (" + imp.nation + ")\n"
         await imposter.discord_handle.dm_channel.send(sendstr)
 
         #Find some fake tasks for the imposter to do
@@ -723,7 +745,7 @@ async def kill_victim(imposter, victim_name):
                 await imposter.discord_handle.dm_channel.send("Killing of " + victim_name + " recorded")
 
                 #Alert the killed player of their updated status
-                await victim.discord_handle.send(">\n\n---------------------------------------------\n|^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|\n|>>>   >>  You have been killed.   <<    <<<|\n| Don't worry you can still complete tasks! |\n|...........................................|\n---------------------------------------------\n")
+                await victim.discord_handle.send(">\n\n```---------------------------------------------\n|^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|\n|>>>   >>  You have been killed.   <<    <<<|\n| Don't worry you can still complete tasks! |\n|...........................................|\n---------------------------------------------```\n")
 
                 #End the game if necessary
                 if kills_needed == 0:
@@ -891,9 +913,9 @@ async def help_command(ctx):
         helpstr = helpstr + "`.tasks` -> displays a list of your remaining tasks\n"
         helpstr = helpstr + "`.how [taskname]` -> gives instructions on the current step of the task\n"
         helpstr = helpstr + "`.complete [taskname]`-> completes the next step of the task using the short name of the task\n"
-        helpstr = helpstr + "`.body [color]` -> reports a body using the color of the dead marker\n"
+        helpstr = helpstr + "`.body [nation]` -> reports a body using the nation of the dead marker\n"
         helpstr = helpstr + "`.meeting` -> calls an emergency meeting if available\n"
-        helpstr = helpstr + "`.vote [name]` OR `.vote [color]` -> only available during voting periods, allows you to vote for a person (or their color) to be booted from the ship\n"
+        helpstr = helpstr + "`.vote [name]` OR `.vote [nation]` -> only available during voting periods, allows you to vote for a person (or their nation) to be booted from the ship\n"
         helpstr = helpstr + "`.reactortop` OR `.reactorbot` -> use when fixing the reactor, only use the one correctly corresponding to your position\n"
         helpstr = helpstr + "`.oxygena` OR `.oxygenb` -> use when fixing the reactor, only use the one correctly corresponding to your position`\n"
         await ctx.channel.send(helpstr)
@@ -918,7 +940,7 @@ async def help_command(ctx):
     if ctx.channel.name == "lobby":
         helpstr = ""
         helpstr = helpstr + "`.name [name]` to cahnge your name\n"
-        helpstr = helpstr + "`.color [color]` to change your color\n"
+        helpstr = helpstr + "`.nation [nation]` to change your nation\n"
         helpstr = helpstr + "`.leave` to leave the lobby\n"
         helpstr = helpstr + "`.roster` to display the names of all players in the game\n"
         await ctx.channel.send(helpstr)
@@ -1043,6 +1065,7 @@ async def task_completion_command(ctx):
     if is_imposter_command(ctx):
         await ctx.channel.send("IMPOSTERS CANNOT COMPLETE TASKS!")
 
+#TODO reporting body should allow for nation, color, or agency
 #This is where people can report a dead body (!body)
 @bot.command('body')
 async def body_report_command(ctx):
@@ -1056,10 +1079,10 @@ async def body_report_command(ctx):
         crewmate = get_player_by_handle(ctx.author)
         body = get_player_by_color(ctx.message.content.split()[1])
         if body == None:
-            await ctx.channel.send("No player with that color!")
+            await ctx.channel.send("No player with that nation!")
             return
         if (body.is_alive):
-            await ctx.channel.send("Check your reporting, make sure you have the right color")
+            await ctx.channel.send("Check your reporting, make sure you have the right nation")
             return
         if body.death_known:
             await ctx.channel.send("This body is already known to be dead!")
@@ -1243,6 +1266,7 @@ async def oxygen_depletion_command(ctx):
         else:
             await ctx.channel.send("You must wait {:.0f} more seconds before you can sabotoge".format(get_sabotoge_time_remaining()))
 
+#TODO killing should allow for name, nation, color, or agency
 #Claim a kill and record it to the list
 @bot.command('kill')
 async def kill_command(ctx):
@@ -1392,6 +1416,7 @@ async def settings_command(ctx):
 #Game starting command, all players that have joined the lobby will be part of the game
 @bot.command('start')
 async def start_game_command(ctx):
+    #TODO also allow from lobby if player is game-master
     if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "game-commands":
         print("Starting game")
         await choose_imposter(ctx.guild)
@@ -1417,10 +1442,10 @@ async def join_lobby_command(ctx):
         print("Adding " + name + " to the game")
         if ctx.author.name != "Gersh":
             await ctx.author.edit(nick=name)
-        color = select_color()
-        add_player_to_lobby(Player_Data(ctx.author, name, color))
+        nation = select_color()
+        add_player_to_lobby(Player_Data(ctx.author, name, nation))
 
-        await ctx.guild.get_channel(int(LOBBY)).send(name + " has been added to the game with color: " + color + "!")
+        await ctx.guild.get_channel(int(LOBBY)).send(name + " has been added to the game with nation: " + nation + "!")
         role = discord.utils.get(ctx.guild.roles, name="Player")
         await ctx.author.add_roles(role)
         await send_roster(ctx.guild.get_channel(int(LOBBY)), True)
@@ -1444,13 +1469,13 @@ async def name_change_command(ctx):
         await send_roster(ctx.guild.get_channel(int(LOBBY)), True)
         return
 
-#Allows a player to change their color once in the lobby
-@bot.command('color')
+#Allows a player to change their nation once in the lobby
+@bot.command('nation')
 async def color_change_command(ctx):
     if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "lobby":
-        color = ctx.message.content.split()[1].lower()
-        if color == "":
-            await ctx.channel.send("You must enter a color after `.color` to change your color")
+        nation = ctx.message.content.split()[1].lower()
+        if nation == "":
+            await ctx.channel.send("You must enter a nation after `.nation` to change your nation")
             return
 
         temp = get_player_by_handle(ctx.author)
@@ -1459,17 +1484,17 @@ async def color_change_command(ctx):
 
         global player_list
         for player in player_list:
-            if player.color == color:
-                await ctx.channel.send(color + " is already selected by a player!")
+            if player.nation == nation:
+                await ctx.channel.send(nation + " is already selected by a player!")
                 return
 
-        if not color in color_list:
-            await ctx.channel.send(color + " is not a valid color, color must be:\n black, white, red, green, blue, cyan, orange, yellow, brown, pink, lime")
+        if not nation in nation_list:
+            await ctx.channel.send(nation + " is not a valid nation, nation must be:\n asa, cnsa, esa, iran, isa, asi, kcst, kari, isro, jaxa, nasa, cnes, ssau, ros")
             return
-        print("Changing " + temp.name + " to the " + color)
-        temp.color = color
+        print("Changing " + temp.name + " to " + nation)
+        temp.nation = nation
 
-        await ctx.guild.get_channel(int(LOBBY)).send(temp.name + " has changed their color to: " + color + "!")
+        await ctx.guild.get_channel(int(LOBBY)).send(temp.name + " has changed their nation to: " + nation + "!")
         await send_roster(ctx.guild.get_channel(int(LOBBY)), True)
         return
 
