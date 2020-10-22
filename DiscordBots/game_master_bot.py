@@ -39,8 +39,9 @@ class GameSettings:
         self.meeting_return_time = 30
         self.meeting_discussion_time = 30
         self.meeting_voting_time = 60
+        self.eject_info = True
         self.reporting_type = "Manual" #TODO implement
-
+        
 game_settings = GameSettings()
 meeting_status = False
 voting_active = False
@@ -49,7 +50,7 @@ warning_timer = None
 skipped_votes = 0
 casted_votes = 0
 
-def set_game(imposters=-1, tasks=-1, m_count=-1, k_cool=-1, s_cool=-1, m_cool=-1, d_cool_crew=-1, d_cool_imposter=-1, ox_time=-1, reactor_time=-1, return_time=-1, discussion_time=-1, vote_time=-1):
+def set_game(imposters=-1, tasks=-1, m_count=-1, k_cool=-1, s_cool=-1, m_cool=-1, d_cool_crew=-1, d_cool_imposter=-1, ox_time=-1, reactor_time=-1, return_time=-1, discussion_time=-1, vote_time=-1, eject_info=-1):
     if imposters != -1:
         game_settings.imposter_count = imposters
     if tasks != -1:
@@ -76,6 +77,11 @@ def set_game(imposters=-1, tasks=-1, m_count=-1, k_cool=-1, s_cool=-1, m_cool=-1
         game_settings.meeting_discussion_time = discussion_time
     if vote_time != -1:
         game_settings.meeting_voting_time = vote_time
+    if eject_info != -1:
+        if eject_info == 0:
+            game_settings.eject_info = False
+        if eject_info == 1:
+            game_settings.eject_info = True
 
 class Task:
     def __init__(self, name, short_name, location_list, crew_count, repeatable, subtask_count, instruction_list, remote_trigger):
@@ -774,7 +780,8 @@ async def send_expelled(expelled):
         infostr = infostr + " was NOT an imposter"
     for player in player_list:
         await player.discord_handle.dm_channel.send(expelled.name + " was launched out the airlock")
-        await player.discord_handle.dm_channel.send(infostr)
+        if game_settings.eject_info:
+            await player.discord_handle.dm_channel.send(infostr)
 
 #Sends each player a notification that the vote was skipped
 async def send_voting_skipped():
@@ -947,6 +954,8 @@ async def help_command(ctx):
             "\t`.set discussion_time [num]` to set how long players have to discuss during a meeting before voting begins\n"
         command_list = command_list + \
             "\t`.set vote_time [num]` to set how long players have to vote during a meeting\n"
+        command_list = command_list + \
+            "\t`.set eject_info true` or `.set eject_info false` to set whether or not ejected players roles are revealed\n"
         await ctx.channel.send(command_list)
 
     if ctx.channel.name == "dev-command-tests":
@@ -1370,6 +1379,15 @@ async def settings_command(ctx):
             set_game(vote_time=int(request[2]))
             await ctx.guild.get_channel(int(LOBBY)).send("Voting time set to " + request[2])
             return
+        if request[1] == "eject_info":
+            if request[2] == "true":
+                set_game(eject_info=1)
+                await ctx.guild.get_channel(int(LOBBY)).send("Ejection info set to TRUE")
+                return
+            elif request[2] == "false":
+                set_game(eject_info=0)
+                await ctx.guild.get_channel(int(LOBBY)).send("Ejection info set to FALSE")
+                return
 
 #Game starting command, all players that have joined the lobby will be part of the game
 @bot.command('start')
