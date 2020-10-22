@@ -1505,5 +1505,22 @@ async def leave_lobby_command(ctx):
         await kick_player(ctx.author, ctx.guild)
         return
 
+#Grabs data from the server to pass to the bot
+#TODO connect to the server before running the bot so the bot can send data to server 
+#TODO create blocking loop on the server socket awaiting any updates from the server
+async def periodic_polling():
+    await bot.wait_until_ready()
+    guild = bot.get_guild(int(GUILD))
+    lobby = guild.get_channel(int(LOBBY))
+    print("Background task connected")
+    print("Attempting to start loop")
+    while True:
+        print("Polling for updates")
+        await lobby.send("Test")
+        await asyncio.sleep(30)
+    print("Loop finished? Oh no!")
+
+#Runs the polling task and the bot
+bot.loop.create_task(periodic_polling())
 print("Running bot startup")
 bot.run(TOKEN)
