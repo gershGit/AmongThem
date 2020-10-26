@@ -9,6 +9,7 @@ import asyncio
 from threading import Thread
 from asynctimer import AsyncTimer
 import socket
+import stat_system as stats
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -22,6 +23,8 @@ LOBBY = os.getenv('DISCORD_LOBBY_CHANNEL')
 GENERAL = os.getenv('DISCORD_GENERAL_CHANNEL')
 IMPOSTER_CHANNEL = os.getenv('DISCORD_IMPOSTER_CHANNEL')
 
+address = ('192.168.0.14', 8771)
+python_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 bot = commands.Bot(command_prefix='.')
 
 class GameSettings:
@@ -41,7 +44,7 @@ class GameSettings:
         self.meeting_voting_time = 60
         self.eject_info = True
         self.reporting_type = "Manual" #TODO implement
-        
+
 game_settings = GameSettings()
 meeting_status = False
 voting_active = False
@@ -242,7 +245,7 @@ nation_dict = {
 
 nation_list = [
     "asa", #Australia
-    "cnsa", #China 
+    "cnsa", #China
     "esa", #Europe
     "iran", #Iran
     "isa", #Israel
@@ -666,14 +669,14 @@ async def fix_oxygen(location):
 async def send_oxygen_warning():
     global oxygen_depleting
     if (oxygen_depleting == True):
-        for player in player_list:                                                         
+        for player in player_list:
             await player.discord_handle.dm_channel.send(">\n\n-----------------------------------\n| Oxygen depletion in 10 seconds! |\n-----------------------------------")
 
 #Ends the game from depleted oxygen not being fixed
 async def send_oxygen_depleted():
     global oxygen_depleting
-    oxygen_depleting = False                                                                   
-    for player in player_list:                                                                 
+    oxygen_depleting = False
+    for player in player_list:
         await player.discord_handle.dm_channel.send(">\n\n----------------------------------------\n| Oxygen depleted. All crewmates died. |\n----------------------------------------")
     await end_game(">\n\n------------------\n| IMPOSTERS win! |\n------------------")
 
@@ -1341,6 +1344,9 @@ async def lobby_create_command(ctx):
         lobby = guild.get_channel(int(LOBBY))
         await clean_chat(lobby)
 
+        #Load up the statistics file
+        stats.load_stats_file()
+
         #Announce lobby prepared
         general = guild.get_channel(int(GENERAL))
         await general.send("Lobby created! Type `.join [name]` to join the lobby.")
@@ -1444,6 +1450,7 @@ async def join_lobby_command(ctx):
             await ctx.author.edit(nick=name)
         nation = select_color()
         add_player_to_lobby(Player_Data(ctx.author, name, nation))
+        register_statistics(ctx.author)
 
         await ctx.guild.get_channel(int(LOBBY)).send(name + " has been added to the game with nation: " + nation + "!")
         role = discord.utils.get(ctx.guild.roles, name="Player")
@@ -1506,9 +1513,10 @@ async def leave_lobby_command(ctx):
         return
 
 #Grabs data from the server to pass to the bot
-#TODO connect to the server before running the bot so the bot can send data to server 
+#TODO connect to the server before running the bot so the bot can send data to server
 #TODO create blocking loop on the server socket awaiting any updates from the server
 async def periodic_polling():
+    socket.create_connection(address)
     await bot.wait_until_ready()
     guild = bot.get_guild(int(GUILD))
     lobby = guild.get_channel(int(LOBBY))

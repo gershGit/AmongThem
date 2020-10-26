@@ -1,55 +1,45 @@
 import socket
-import discord
-from threading import Thread 
-from socketserver import ThreadingMixIn 
+from threading import Thread
+from socketserver import ThreadingMixIn
 import time
 from asynctimer import AsyncTimer
 import asyncio
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
-GUILD = os.getenv('DISCORD_GUILD')
+#TODO for simplification, create a bunch of threads, each listening on their own port, each associated with a different task or discord bot
+#TODO discord connection can send data to discord file by polling the to discord data
 
 discord_data_flag = False
 discord_data_list = []
 discord_data_lock = asyncio.Lock()
 
-discord_bot_lock = asyncio.Lock()
-discord_bot = None
+tasks_data_flag = False
+tasks_data_list = []
+tasks_data_lock = asyncio.Lock()
 
 reactor_top_ip = ""
 reactor_top_port = 0
 reactor_top_registered = False
 
-client = discord.Client()
-
-@client.event
-async def on_ready():
-    #Display server info
-    guild = client.get_guild(int(GUILD))
-    #TODO send any message here
-    client.close()
-
 # Multithreaded Python server : TCP Server Socket Thread Pool
-class ClientThread(Thread): 
+class ClientThread(Thread):
     #TODO add more complex information so each thread can handle the connection based on what type of client is speaking
-    def __init__(self,ip,port): 
-        Thread.__init__(self) 
-        self.ip = ip 
-        self.port = port 
+    def __init__(self,ip,port):
+        Thread.__init__(self)
+        self.ip = ip
+        self.port = port
         self.uniqueID = 0
         self.taskID = "Unknown"
         print("[+] New server socket thread started for " + ip + ":" + str(port))
 
         #When we need to manage messages here is where we will
         #MESSAGE = (b'MELTDOWN\n')
-        #conn.send(MESSAGE)  
- 
+        #conn.send(MESSAGE)
+
     #TODO launch different functions depending on what type of client it is
-    async def run(self): 
-        while True : 
+    async def run(self):
+        while True :
             global discord_data_lock, discord_data_list, discord_data_flag
             data_bytes = None
             try:
@@ -98,30 +88,32 @@ class ClientThread(Thread):
                     discord_data_list.append(instr)
                     discord_data_flag = True
                 continue
+            if data[0] == "B":
+                print("Discord bot connected!")
             print("Unknown message")
 
 # Multithreaded Python server : TCP Server Socket Program Stub
-TCP_IP = '172.16.18.150'
+TCP_IP = '192.168.0.14'
 TCP_PORT = 8771
-BUFFER_SIZE = 20  # Usually 1024, but we need quick response 
+BUFFER_SIZE = 20  # Usually 1024, but we need quick response
 
-tcpServer = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-tcpServer.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+tcpServer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+tcpServer.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 tcpServer.setblocking(False)
-tcpServer.bind((TCP_IP, TCP_PORT)) 
-threads = [] 
+tcpServer.bind((TCP_IP, TCP_PORT))
+threads = []
 
 print("Multithreaded Python server : Waiting for connections from TCP clients..." )
-while True: 
-    tcpServer.listen(20) 
+while True:
+    tcpServer.listen(20)
     try:
-        (conn, (ip,port)) = tcpServer.accept() 
+        (conn, (ip,port)) = tcpServer.accept()
     except:
         time.sleep(0.25)
         continue
-    newthread = ClientThread(ip,port) 
-    newthread.start() 
-    threads.append(newthread) 
- 
-for t in threads: 
-    t.join() 
+    newthread = ClientThread(ip,port)
+    newthread.start()
+    threads.append(newthread)
+
+for t in threads:
+    t.join()
