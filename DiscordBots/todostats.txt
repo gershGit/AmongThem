@@ -1,0 +1,2 @@
+Stats should have every nation played and killed
+Stats should have all buffs, earned, used, succeeded
