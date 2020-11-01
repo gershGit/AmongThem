@@ -766,6 +766,22 @@ async def end_game(statement):
         await player.discord_handle.dm_channel.send("Return to the lobby channel as the game resets!")
     await reset_lobby()
 
+async def handle_action(action_info):
+    print("Handling action " + action_info)
+    if action_info == "Meeting":
+        global meeting_status
+        if meeting_status == True:
+            return
+        for player in player_list:
+            meeting_string = "An emergency meeting has been called!\n"
+            meeting_string = meeting_string + "You have " + str(game_settings.meeting_return_time) + " seconds to return to the command console"
+            await player.discord_handle.dm_channel.send(meeting_string)
+        start_meeting_timers()
+
+async def complete_task_arduino(task_info):
+    print("Handling arduino task completion of " + task_info)
+    print("Logged completion of task!")
+
 #Crew related code
 tasks_completed = 0
 tasks_total = 0
@@ -1344,6 +1360,8 @@ async def lobby_create_command(ctx):
         #Announce lobby prepared
         general = guild.get_channel(int(GENERAL))
         await general.send("Lobby created! Type `.join [name]` to join the lobby.")
+
+        connection.sendall(b'Lobby\n')
         return
 
 #Game setting commands
@@ -1505,19 +1523,52 @@ async def leave_lobby_command(ctx):
         await kick_player(ctx.author, ctx.guild)
         return
 
+TCP_IP = '172.16.18.150'
+ARDUINO_PORT = 8771
+DISCORD_PORT = 8772
+
+arduino_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+arduino_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+arduino_server.setblocking(False)
+arduino_server.bind((TCP_IP, ARDUINO_PORT)) 
+
+connection = None
+
 #Grabs data from the server to pass to the bot
+#TODO make a server that listens here
 #TODO connect to the server before running the bot so the bot can send data to server 
 #TODO create blocking loop on the server socket awaiting any updates from the server
 async def periodic_polling():
     await bot.wait_until_ready()
-    guild = bot.get_guild(int(GUILD))
-    lobby = guild.get_channel(int(LOBBY))
-    print("Background task connected")
-    print("Attempting to start loop")
+    print("Background task connected, starting server")
+    arduino_server.listen(1)
+    print("Wating for connection from arduino hub")
+    global connection
     while True:
-        print("Polling for updates")
-        await lobby.send("Test")
-        await asyncio.sleep(30)
+        try:
+            connection, client_address = arduino_server.accept()
+            print("Connection from ", client_address)
+            while True:
+                data_bytes = None
+                try:
+                    data_bytes=connection.recv(2048)
+                    print("Server received bytes: ", data_bytes)
+                    data = str(data_bytes.decode().strip())
+                    print("Data is: " + data)
+                    print("Data[0] is: ", data[0])
+                    if (data[0] == "R"):
+                        print ("Register")
+                        connection.sendall(b'Test\n')
+                    if (data[0] == "A"):
+                        await handle_action(data[2:])
+                    if (data[0] == "T"):
+                        await complete_task_arduino(data[2:])
+                except socket.error:
+                    await asyncio.sleep(0.25)
+                    pass
+        except:
+            await asyncio.sleep(0.25)
+            continue
     print("Loop finished? Oh no!")
 
 #Runs the polling task and the bot
