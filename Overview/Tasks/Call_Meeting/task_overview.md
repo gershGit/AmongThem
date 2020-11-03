@@ -1,0 +1,42 @@
+# Log Manifest
+## Info
+- Name: 
+    - Call Meeting
+- Short Name: 
+    - meeting
+- Repeatable: 
+    - Yes
+- Description:
+    - Calls an emergency meeting for the game. Works on an unlimited meetings per person setup with a longer timer than individual meetings.
+- Location:
+    - Main Hub
+- Physical Process:
+    - Press the big button.
+- Buff: 
+    - TBD (Only happens if your meeting leads to a)
+- Buff Shortname: 
+    - TBD
+- Buff Description:
+    - TBD
+- Available Actions from buff: 
+    - TBD
+- Nerf:
+    - TBD
+- Nerf Shortname:
+    - TBD
+- Nerf Description:
+    - TBD
+
+## Development Sequence
+- [ ] Discord Data
+- [X] Electronic Schematic
+- [X] Electronic Wiring Tested
+- [X] Arduino Wireless Comm  
+- [ ] Comm Values Selected 
+- [X] 3D Housing Modeled        
+- [X] Node Selection         
+- [X] Arduino->Discord Test    
+- [X] Discord->Arduino Test   
+- [ ] 3D Print                
+- [ ] Simulated Game Test 
+- [ ] QA Testing 

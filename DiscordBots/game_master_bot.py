@@ -47,11 +47,14 @@ class GameSettings:
 
 game_settings = GameSettings()
 meeting_status = False
+meeting_caller = None
 voting_active = False
 voting_timer = None
 warning_timer = None
 skipped_votes = 0
 casted_votes = 0
+unclaimed_action = None
+unclaimed_tasks = []
 
 def set_game(imposters=-1, tasks=-1, m_count=-1, k_cool=-1, s_cool=-1, m_cool=-1, d_cool_crew=-1, d_cool_imposter=-1, ox_time=-1, reactor_time=-1, return_time=-1, discussion_time=-1, vote_time=-1, eject_info=-1):
     if imposters != -1:
@@ -86,8 +89,23 @@ def set_game(imposters=-1, tasks=-1, m_count=-1, k_cool=-1, s_cool=-1, m_cool=-1
         if eject_info == 1:
             game_settings.eject_info = True
 
+class Action:
+    def __init__(self, name, count):
+        self.name = name
+        self.count = count
+
+class Buff:
+    def __init__(self, name, short_name, location_requirement, ability_count, description, immediate, ends_on_meeting):
+        self.name = name
+        self.short_name = short_name
+        self.location_requirement = location_requirement
+        self.ability_count = ability_count
+        self.description = description
+        self.immediate = True
+        self.ends_on_meeting = ends_on_meeting
+
 class Task:
-    def __init__(self, name, short_name, location_list, crew_count, repeatable, subtask_count, instruction_list, remote_trigger):
+    def __init__(self, name, short_name, location_list, crew_count, repeatable, subtask_count, instruction_list, remote_trigger, buff):
         self.name = name
         self.short_name = short_name
         self.location_list = location_list
@@ -97,6 +115,7 @@ class Task:
         self.instruction_list = instruction_list
         self.remote_trigger = remote_trigger
         self.completed_count = 0
+        self.buff = buff
 
     def is_complete(self):
         return self.completed_count >= self.subtask_count
@@ -140,35 +159,40 @@ class Task:
 #unlock manifolds -> figure out which key unlocks the lock
 #upload data -> grab 3d printed card and put it in a 3d printed slot
 
+meeting_action = Action("Meeting", 1)
+
+nobuff = Buff("No Buff", "none", "none", 0, "No buff associated", True, False)
+timer_buff = Buff("Clear Timers", "clear", "none", 0, "Clear all player timers for any actions still resetting.", True, False),
+
 master_task_list = [
-    Task("Fix Wires", "wires", ["storage", "cafeteria", "shields"], 1, False, 3, ["Connect the wires from the left to the right", "Connect the wires from the left to the right", "Connect the wires from the left to the right"], "Remote"),
-    Task("Swipe Card", "swipe", ["admin"], 1, True, 1, ["Swipe the card through the slot"], "Match"),
-    Task("Calibrate Distributor", "calibrate", ["electrical"], 1, True, 1, ["Twist the knob until calibrated"], "Remote"),
-    Task("Align Engine Output", "align", ["Upper Engine", "Lower Engine"], 1, False, 2, ["Align the engine output", "Align the engine output"], True),
-    Task("Chart course", "chart", ["Navigation"], 1, False, 1, ["Move the spaceship to the final location"], "Remote"),
-    Task("Clean O2 Filter", "clean", ["Oxygen"], 1, False, 1, ["Move the leaves into the slot"], "Report"),
-    Task("Clear Astroids", "astroids", ["Weapons"], 1, True, 1, ["Shoot 20 asteroids as they appear"], "Match"),
-    Task("Divert Power to Communications", "pcomm", ["Electrical", "Communications"], 1, False, 2, ["Flip the power on for the room labeled communications", "Retrieve the power disk from communications and place it onto the main table"], "Report"),
-    Task("Divert Power to Lower Engine", "pengine", ["Electrical", "Lower Engine"], 1, False, 2, ["Flip the power on for the room labeled Engines", "Retrieve the power disk from lower engine and place it onto the main table"], "Report"),
-    Task("Divert Power to Navigation", "pnav", ["Electrical", "Navigation"], 1, False, 2, ["Flip the power on for the room labeled navigation", "Retrieve the power disk from navigation and place it onto the main table"], "Report"),
-    Task("Divert Power to O2", "pox", ["Electrical", "Oxygen"], 1, False, 2, ["Flip the power on for the room labeled oxygen", "Retrieve the power disk from oxygen and place it onto the main table"], "Report"),
-    Task("Divert Power to Reactor", "preactor", ["Electrical", "Reactor"], 1, False, 2, ["Flip the power on for the room labeled reactor", "Retrieve the reactor disk from reactor and place it onto the main table"], "Report"),
-    Task("Divert Power to Security", "psec", ["Electrical", "Security"], 1, False, 2, ["Flip the power on for the room labeled security", "Retrieve the power disk from security and place it onto the main table"], "Report"),
-    Task("Divert Power to Shields", "pshield", ["Electrical", "Shields"], 1, False, 2, ["Flip the power on for the room labeled shields", "Retrieve the power disk from shields and place it onto the main table"], "Report"),
-    Task("Divert Power to Upper Engine", "pupper", ["Electrical", "Upper Engine"], 1, False, 2, ["Flip the power on for the room labeled upper engine", "Retrieve the power disk from upper engine and place it onto the main table"], "Report"),
-    Task("Empty Chute", "chute", ["Oxygen", "Storage"], 1, True, 2, ["Hold the chute lever down until the light turns green", "Hold the chut lever down until the light turns green"], "Match"),
-    Task("Fuel Engines", "fuel", ["Storage", "Upper Engine", "Storage", "Lower Engine"], 1, False, 4, ["Retrieve a single fuel cell", "Insert fuel cell into upper engine", "Retrieve a single fuel cell", "Insert fuel cell into lower engine"], "Remote"),
-    Task("Inspect Sample", "sample", ["MedBay", "MedBay"], 1, True, 2, ["Start the inspection sampler", "Select the incorrect sample"], "Match"),
-    Task("Prime Shields", "shields", ["Shields"], 1, False, 1, ["Place all shield discs into the tray"], "Remote"),
-    Task("Stabilize stearing", "steering", ["Navigation"], 1, False, 1, ["Align steering with target"], "Match"),
-    Task("Submit Scan", "scan", ["Medbay", "Medbay"], 1, True, 2, ["Stand in place on scanner for 20 seconds", "Report scan success"], "Report"),
-    Task("Start Reactor", "reactor", ["Reactor"], 1, True, 1, ["Match the pattern of the LEDs"], "Remote"),
-    Task("Unlock Manifolds", "unlock", ["Reactor"], 1, True, 1, ["Unlock the manifold"], "Remote"),
-    Task("Upload Data from Cafeteria", "datacaf", ["Cafeteria", "Admin"], 1, True, 2, ["Retrieve a data cartridge from the cafeteria", "Place the data cartridge in the admin computer"], "Report"),
-    Task("Upload Data from Communications", "datacomm", ["Communications", "Admin"], 1, True, 2, ["Retrieve a data cartridge from communications", "Place the data cartridge in the admin computer"], "Report"),
-    Task("Upload Data from Weapons", "dataweapon", ["Weapons", "Admin"], 1, True, 2, ["Retrieve a data cartridge from weapons", "Place the data cartridge in the admin computer"], "Report"),
-    Task("Upload Data from Electrical", "dataelec", ["Electrical", "Admin"], 1, True, 2, ["Retrieve a data cartridge from electrical", "Place the data cartridge in the admin computer"], "Report"),
-    Task("Upload Data from Navigation", "datanav", ["Navigation", "Admin"], 1, True, 2, ["Retrieve a data cartridge from navigation", "Place the data cartridge in the admin computer"], "Report")
+    Task("Fix Wires", "wires", ["storage", "cafeteria", "shields"], 1, False, 3, ["Connect the wires from the left to the right", "Connect the wires from the left to the right", "Connect the wires from the left to the right"], "Remote", nobuff),
+    Task("Swipe Card", "swipe", ["admin"], 1, True, 1, ["Swipe the card through the slot"], "Match", nobuff),
+    Task("Calibrate Distributor", "calibrate", ["electrical"], 1, True, 1, ["Twist the knob until calibrated"], "Remote", nobuff),
+    Task("Align Engine Output", "align", ["Upper Engine", "Lower Engine"], 1, False, 2, ["Align the engine output", "Align the engine output"], "Remote", nobuff),
+    Task("Chart course", "chart", ["Navigation"], 1, False, 1, ["Move the spaceship to the final location"], "Remote", nobuff),
+    Task("Clean O2 Filter", "clean", ["Oxygen"], 1, False, 1, ["Move the leaves into the slot"], "Report", nobuff),
+    Task("Clear Astroids", "astroids", ["Weapons"], 1, True, 1, ["Shoot 20 asteroids as they appear"], "Match", nobuff),
+    Task("Divert Power to Communications", "pcomm", ["Electrical", "Communications"], 1, False, 2, ["Flip the power on for the room labeled communications", "Retrieve the power disk from communications and place it onto the main table"], "Report", nobuff),
+    Task("Divert Power to Lower Engine", "pengine", ["Electrical", "Lower Engine"], 1, False, 2, ["Flip the power on for the room labeled Engines", "Retrieve the power disk from lower engine and place it onto the main table"], "Report", nobuff),
+    Task("Divert Power to Navigation", "pnav", ["Electrical", "Navigation"], 1, False, 2, ["Flip the power on for the room labeled navigation", "Retrieve the power disk from navigation and place it onto the main table"], "Report", nobuff),
+    Task("Divert Power to O2", "pox", ["Electrical", "Oxygen"], 1, False, 2, ["Flip the power on for the room labeled oxygen", "Retrieve the power disk from oxygen and place it onto the main table"], "Report", nobuff),
+    Task("Divert Power to Reactor", "preactor", ["Electrical", "Reactor"], 1, False, 2, ["Flip the power on for the room labeled reactor", "Retrieve the reactor disk from reactor and place it onto the main table"], "Report", nobuff),
+    Task("Divert Power to Security", "psec", ["Electrical", "Security"], 1, False, 2, ["Flip the power on for the room labeled security", "Retrieve the power disk from security and place it onto the main table"], "Report", nobuff),
+    Task("Divert Power to Shields", "pshield", ["Electrical", "Shields"], 1, False, 2, ["Flip the power on for the room labeled shields", "Retrieve the power disk from shields and place it onto the main table"], "Report", nobuff),
+    Task("Divert Power to Upper Engine", "pupper", ["Electrical", "Upper Engine"], 1, False, 2, ["Flip the power on for the room labeled upper engine", "Retrieve the power disk from upper engine and place it onto the main table"], "Report", nobuff),
+    Task("Empty Chute", "chute", ["Oxygen", "Storage"], 1, True, 2, ["Hold the chute lever down until the light turns green", "Hold the chut lever down until the light turns green"], "Match", nobuff),
+    Task("Fuel Engines", "fuel", ["Storage", "Upper Engine", "Storage", "Lower Engine"], 1, False, 4, ["Retrieve a single fuel cell", "Insert fuel cell into upper engine", "Retrieve a single fuel cell", "Insert fuel cell into lower engine"], "Remote", nobuff),
+    Task("Inspect Sample", "sample", ["MedBay", "MedBay"], 1, True, 2, ["Start the inspection sampler", "Select the incorrect sample"], "Match", nobuff),
+    Task("Prime Shields", "shields", ["Shields"], 1, False, 1, ["Place all shield discs into the tray"], "Remote", nobuff),
+    Task("Stabilize stearing", "steering", ["Navigation"], 1, False, 1, ["Align steering with target"], "Match", nobuff),
+    Task("Submit Scan", "scan", ["Medbay", "Medbay"], 1, True, 2, ["Stand in place on scanner for 20 seconds", "Report scan success"], "Report", nobuff),
+    Task("Start Reactor", "reactor", ["Reactor"], 1, True, 1, ["Match the pattern of the LEDs"], "Remote", nobuff),
+    Task("Unlock Manifolds", "unlock", ["Reactor"], 1, True, 1, ["Unlock the manifold"], "Remote", nobuff),
+    Task("Upload Data from Cafeteria", "datacaf", ["Cafeteria", "Admin"], 1, True, 2, ["Retrieve a data cartridge from the cafeteria", "Place the data cartridge in the admin computer"], "Report", nobuff),
+    Task("Upload Data from Communications", "datacomm", ["Communications", "Admin"], 1, True, 2, ["Retrieve a data cartridge from communications", "Place the data cartridge in the admin computer"], "Report", nobuff),
+    Task("Upload Data from Weapons", "dataweapon", ["Weapons", "Admin"], 1, True, 2, ["Retrieve a data cartridge from weapons", "Place the data cartridge in the admin computer"], "Report", nobuff),
+    Task("Upload Data from Electrical", "dataelec", ["Electrical", "Admin"], 1, True, 2, ["Retrieve a data cartridge from electrical", "Place the data cartridge in the admin computer"], "Report", nobuff),
+    Task("Upload Data from Navigation", "datanav", ["Navigation", "Admin"], 1, True, 2, ["Retrieve a data cartridge from navigation", "Place the data cartridge in the admin computer"], "Report", nobuff)
 ]
 
 class Player_Data:
@@ -180,6 +204,7 @@ class Player_Data:
         self.is_alive = True
         self.death_known = False
         self.tasks = []
+        self.buffs = []
         self.meetings = 1
         self.vote_available = True
         self.vote = None
@@ -582,6 +607,51 @@ reactor_warning = None
 oxygen_timer = None
 oxygen_warning = None
 
+#Applies a buff to a given player
+async def apply_buff(player, buff):
+    await player.discord_handle.dm_channel.send("You have received a buff! The buff does the following:")
+    await player.discord_handle.dm_channel.send(buff.description)
+    if buff.short_name == "clear":
+        player.last_door_time = time.time() - player.door_cooldown
+        player.last_meeting_time = time.time() - player.meeting_cooldown
+        player.last_kill_time = time.time() - player.kill_cooldown
+
+#Handles a player claiming the unclaimed action
+async def claim_action(player, action):
+    global unclaimed_action
+    if action.name == "Meeting":
+        global meeting_caller
+        meeting_caller = player
+        unclaimed_action = None
+        return
+    if action.name == "Airlock":
+        apply_buff(player, nobuff)
+        action.count -= 1
+        if action.count == 0:
+            unclaimed_action = None
+        return
+    if action.name == "Launch Abort":
+        apply_buff(player, nobuff)
+        action.count -= 1
+        if action.count == 0:
+            unclaimed_action = None
+
+#Handles a player claiming an unclaimed task
+async def claim_task(player, taskname):
+    unclaimed_tasks.remove(taskname)
+    for task in player.tasks:
+        if task.short_name == taskname:
+            if task.complete_step() == True:
+                global tasks_completed, tasks_total
+                tasks_completed = tasks_completed + 1
+                await player.discord_handle.dm_channel.send("Task completion recorded")
+                await send_tasks(player)
+                if (tasks_completed == tasks_total):
+                    await end_game("CREWMATES completed all tasks and win!")
+                    return
+            else:
+                await player.discord_handle.dm_channel.send("Task already completed")
+
 #Handles an attempt to fix the reactor at a location, records who is currently at that location for kill purposes
 async def fix_reactor(location, fixer):
     global reactor_top_fixed, reactor_bottom_fixed, reactor_timer, reactor_warning, reactor_bottom_player, reactor_top_player
@@ -777,13 +847,37 @@ async def handle_action(action_info):
             return
         for player in player_list:
             meeting_string = "An emergency meeting has been called!\n"
-            meeting_string = meeting_string + "You have " + str(game_settings.meeting_return_time) + " seconds to return to the command console"
+            meeting_string = meeting_string + "You have " + str(game_settings.meeting_return_time) + " seconds to return to the command console.\nIf you called this meeting type `.claim` to claim the meeting and receive the buff if successful"
             await player.discord_handle.dm_channel.send(meeting_string)
+        global unclaimed_action
+        unclaimed_action = meeting_action
         start_meeting_timers()
 
 async def complete_task_arduino(task_info):
     print("Handling arduino task completion of " + task_info)
-    print("Logged completion of task!")
+    global unclaimed_tasks
+    players_with_task = []
+    for player in player_list:
+        for task in player.tasks:
+            if task.short_name == task_info:
+                players_with_task.append(player)
+    if len(players_with_task) == 1:
+        for task in player.tasks:
+            if task.short_name == task_info:
+                if task.complete_step() == True:
+                    global tasks_completed, tasks_total
+                    tasks_completed = tasks_completed + 1
+                    await players_with_task[0].discord_handle.dm_channel.send("Task completion recorded")
+                    await send_tasks(players_with_task[0])
+                    if (tasks_completed == tasks_total):
+                        await end_game("CREWMATES completed all tasks and win!")
+                        return
+                else:
+                    await players_with_task[0].discord_handle.dm_channel.send("Task already completed")
+    else:
+        for tasker in players_with_task:
+            tasker.discord_handle.dm_channel.send("Possible unclaimed task, check to ensure you have claimed all your completed tasks!")
+        unclaimed_tasks.append(task_info)
 
 #Crew related code
 tasks_completed = 0
@@ -831,7 +925,7 @@ async def send_voting_skipped():
 
 #Counts the votes, expells a player, ends the meeting, resets all timers
 async def count_votes():
-    global meeting_status, voting_active, crewmates_alive
+    global meeting_status, voting_active, crewmates_alive, meeting_caller
     if meeting_status == False:
         print("Function called early by all players voting!")
     print("Tallying votes")
@@ -858,6 +952,12 @@ async def count_votes():
             if imposters_alive == 0:
                 await end_game("All imposters voted out, CREWMATES win!")
                 return
+            else:
+                if meeting_caller.role == "Imposter":
+                    apply_buff(meeting_caller, nobuff) #TODO this should be a nerf
+                else:
+                    apply_buff(meeting_caller, nobuff) #TODO this should be a buff
+                meeting_caller = None
         else:
             global kills_needed
             kills_needed = kills_needed - 1
@@ -865,8 +965,16 @@ async def count_votes():
             if kills_needed == 0:
                 await end_game("All crewmates are dead except the imposters final meal. IMPOSTERS win!")
                 return
+            else:
+                if meeting_caller.role == "Imposter":
+                    apply_buff(meeting_caller, nobuff) #TODO this should be a buff
+                else:
+                    apply_buff(meeting_caller, nobuff) #TODO this should be a nerf
+                meeting_caller = None
     else:
         await send_voting_skipped()
+        apply_buff(meeting_caller, nobuff) #TODO this should be a nerf
+        meeting_caller = None
     await send_tasks_to_all()
     await send_start_set_timers()
 
@@ -896,6 +1004,13 @@ async def announce_voting_period():
 #Announces to all living players they can talk
 async def announce_discussion_period():
     print("Start discussion")
+    if meeting_caller == None:
+        for player in player_list:
+            await player.discord_handle.dm_channel.send("Nobody claimed the meeting, return to your tasks!")
+            await send_start_set_timers()
+            return
+    global unclaimed_tasks
+    unclaimed_tasks = []
     for player in player_list:
         if player.is_alive == True:
             await player.discord_handle.dm_channel.send("Discussion period has started, sus out the imposter!")
@@ -1068,6 +1183,9 @@ async def task_completion_command(ctx):
             return
         taskname = ctx.message.content.split()[1]
         crewmate = get_player_by_handle(ctx.author)
+        if taskname in unclaimed_tasks:
+            claim_task(crewmate, taskname)
+            return
         for task in crewmate.tasks:
             if task.short_name == taskname:
                 if task.complete_step() == True:
@@ -1153,6 +1271,7 @@ async def call_meeting_command(ctx):
         crewmate = get_player_by_handle(ctx.author)
         if crewmate.meeting_allowed():
             crewmate.meetings = crewmate.meetings - 1
+            meeting_caller = crewmate
             meeting_status = True
             await ctx.channel.send("Meeting success, alerting others!")
             for player in player_list:
@@ -1468,7 +1587,7 @@ async def join_lobby_command(ctx):
             await ctx.author.edit(nick=name)
         nation = select_color()
         add_player_to_lobby(Player_Data(ctx.author, name, nation))
-        register_statistics(ctx.author)
+        stats.register_statistics(ctx.author)
 
         await ctx.guild.get_channel(int(LOBBY)).send(name + " has been added to the game with nation: " + nation + "!")
         role = discord.utils.get(ctx.guild.roles, name="Player")
@@ -1529,6 +1648,14 @@ async def leave_lobby_command(ctx):
     if ctx.channel.type != discord.ChannelType.private and ctx.channel.name == "lobby":
         await kick_player(ctx.author, ctx.guild)
         return
+
+#Used for when a notification for claiming actions is required
+@bot.command('claim')
+async def claim_action_command(ctx):
+    if unclaimed_action == None:
+        await ctx.channel.send("There are no actions to claim!")
+    else:
+        await claim_action(get_player_by_handle(ctx.author), unclaimed_action)
 
 TCP_IP = '172.16.18.150'
 ARDUINO_PORT = 8771
