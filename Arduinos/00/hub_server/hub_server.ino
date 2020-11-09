@@ -1,6 +1,7 @@
 #include <RF24Network.h>
 #include <RF24.h>
 #include <SPI.h>
+
 #define BUTTON 16
 #define GREEN_LED 0
 #define RED_LED 4
@@ -12,7 +13,7 @@ RF24 radio(D4, D8);
 RF24Network network(radio);      
 const uint16_t this_node = 00;   
 const uint16_t node01 = 01;     
-const uint16_t node011 = 011;
+//const uint16_t node011 = 011;
 
 bool button_status = false;
 bool bs_2 = false;
@@ -50,7 +51,7 @@ void loop() {
     char message[5] = "OFF";
     bool ok = network.write(header2, message, 5); // Send the data
   }
-
+  /*
   if (digitalRead(SECONDARY_BUTTON) == LOW && bs_2 == true){
     Serial.println("Sending on to 011");
     bs_2 = false;  
@@ -64,4 +65,5 @@ void loop() {
     char message[5] = "OFF";
     bool ok = network.write(header2, message, 5); // Send the data
   }
+  */
 }

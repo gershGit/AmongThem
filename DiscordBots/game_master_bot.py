@@ -1480,13 +1480,12 @@ async def lobby_create_command(ctx):
         await clean_chat(lobby)
 
         #Load up the statistics file
-        stats.load_stats_file()
+        #stats.load_stats_file()
 
         #Announce lobby prepared
         general = guild.get_channel(int(GENERAL))
         await general.send("Lobby created! Type `.join [name]` to join the lobby.")
-
-        connection.sendall(b'Lobby\n')
+        connection.sendall(b'start\n') #TODO delete, temp testing
         return
 
 #Game setting commands
@@ -1566,6 +1565,7 @@ async def start_game_command(ctx):
         await apportion_tasks(ctx.guild)
         await send_tasks_to_all()
         await send_start_set_timers()
+        connection.sendall(b'start\n')
         return
 
  #Allows a member to join the lobby pre-game
@@ -1593,6 +1593,7 @@ async def join_lobby_command(ctx):
         role = discord.utils.get(ctx.guild.roles, name="Player")
         await ctx.author.add_roles(role)
         await send_roster(ctx.guild.get_channel(int(LOBBY)), True)
+        #TODO send player info to arduino
         return
 
 #Allows a player to change their name in the lobby without leaving and rejoining
@@ -1670,7 +1671,6 @@ connection = None
 
 #Grabs data from the server to pass to the bot
 async def periodic_polling():
-    socket.create_connection(address)
     await bot.wait_until_ready()
     print("Background task connected, starting server")
     arduino_server.listen(1)
@@ -1695,6 +1695,8 @@ async def periodic_polling():
                         await handle_action(data[2:])
                     if (data[0] == "T"):
                         await complete_task_arduino(data[2:])
+                    if (data[0] == "N"):
+                        print("Adding node to active list")
                 except socket.error:
                     await asyncio.sleep(0.25)
                     pass
