@@ -1658,14 +1658,13 @@ async def claim_action_command(ctx):
     else:
         await claim_action(get_player_by_handle(ctx.author), unclaimed_action)
 
-TCP_IP = '172.16.18.150'
+TCP_IP = '10.0.0.246'
 ARDUINO_PORT = 8771
-DISCORD_PORT = 8772
 
-arduino_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-arduino_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+arduino_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+arduino_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 arduino_server.setblocking(False)
-arduino_server.bind((TCP_IP, ARDUINO_PORT)) 
+arduino_server.bind((TCP_IP, ARDUINO_PORT))
 
 connection = None
 

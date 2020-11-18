@@ -1,5 +1,4 @@
 //Include statements cover the RFID, NRF24, and ESP Wifi
-#include <MFRC522.h>	 //Used for RFID
 #include <RF24Network.h> //Used for RF24
 #include <RF24.h>		 //Used for RF24
 #include <SPI.h>		 //Used for RFID and RF24
@@ -14,7 +13,7 @@
 #define GREEN_LED 2
 
 //Setup of libraries for communication
-MFRC522 mfrc522(RFID_SDA, RFID_RST);
+//MFRC522 mfrc522(RFID_SDA, RFID_RST);
 RF24 radio(RF24_CE, RF24_CS);
 RF24Network network(radio);
 const uint16_t this_node = 00;
@@ -102,7 +101,7 @@ void setup()
 
 	//Initialize RFID and RF24
 	SPI.begin();
-	mfrc522.PCD_Init();
+	//mfrc522.PCD_Init();
 	radio.begin();
 	network.begin(90, this_node);
 	delay(100);

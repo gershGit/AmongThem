@@ -105,6 +105,7 @@ void setGameComplete(int task_num) {
 	digitalWrite(LED_BLUE_PIN, HIGH);
 	digitalWrite(LED_GREEN_PIN, LOW);
 	digitalWrite(LED_RED_PIN, LOW);
+	task_start_time = millis();
 	node_state = 0;
 	task_complete = true;
 	task_num_completed = task_num;
