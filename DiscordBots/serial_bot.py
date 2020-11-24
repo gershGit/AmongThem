@@ -10,6 +10,7 @@ from threading import Thread
 from asynctimer import AsyncTimer
 import socket
 import stat_system as stats
+import serial
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -23,9 +24,12 @@ LOBBY = os.getenv('DISCORD_LOBBY_CHANNEL')
 GENERAL = os.getenv('DISCORD_GENERAL_CHANNEL')
 IMPOSTER_CHANNEL = os.getenv('DISCORD_IMPOSTER_CHANNEL')
 
-address = ('192.168.0.14', 8771)
-python_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 bot = commands.Bot(command_prefix='.')
+arduino = None
+
+#TODO make arduino code a separate module like stats
+node_status = [False, False, False, False, False, False, False, False, False, False]
+
 
 class GameSettings:
     def __init__(self):
@@ -140,6 +144,15 @@ class Task:
         self.completed_count = self.completed_count + 1
         return True
 
+    def complete_step(self, step):
+        if self.completed_count == step - 1:
+            self.completed_count += 1
+            return True
+        elif self.completed_count < step - 1:
+            return False
+        elif self.completed_count > step - 1:
+            return False
+
 #IRL task format
 #wires -> actually connect
 #swipe -> limit switch in slot, time how long it is held down by the swipe
@@ -252,20 +265,20 @@ class Player_Data:
         self.last_kill_time = time_in
 
 nation_dict = {
-    "asa" : {"color": "white", "nation": "australia", "flag": ":flag_au:"},
-    "cnsa" : {"color": "yellow", "nation": "china", "flag": ":flag_cn:"},
-    "esa" : {"color": "blue", "nation": "europe", "flag": ":flag_eu:"},
-    "iran" : {"color": "green", "nation": "iran", "flag": ":flag_ir:"},
-    "isa" : {"color": "cyan", "nation": "israel", "flag": ":flag_il:"},
-    "asi" : {"color": "purple", "nation": "italy", "flag": ":flag_it:"},
-    "kcst" : {"color": "orange", "nation": "northkorea", "flag": ":flag_kp:"},
-    "kari" : {"color": "brown", "nation": "southkorea", "flag": ":flag_kr:"},
-    "isro" : {"color": "black", "nation": "india", "flag": ":flag_in:"},
-    "jaxa" : {"color": "magenta", "nation": "japan", "flag": ":flag_jp:"},
-    "nasa" : {"color": "pink", "nation": "usa", "flag": ":flag_us:"},
-    "cnes" : {"color": "lime", "nation": "france", "flag": ":flag_fr:"},
-    "ssau" : {"color": "navy", "nation": "ukraine", "flag": ":flag_ua:"},
-    "ros" : {"color": "tan", "nation": "russia", "flag": ":flag_ru:"},
+    "asa" : {"color": "white", "nation": "australia", "flag": ":flag_au:", "UID": "4294962036"},
+    "cnsa": {"color": "yellow", "nation": "china", "flag": ":flag_cn:", "UID": "18284"},
+    "esa" : {"color": "blue", "nation": "europe", "flag": ":flag_eu:", "UID": "18539"},
+    "iran" : {"color": "green", "nation": "iran", "flag": ":flag_ir:", "UID": "14956"},
+    "isa" : {"color": "cyan", "nation": "israel", "flag": ":flag_il:", "UID": "4294953077"},
+    "asi" : {"color": "purple", "nation": "italy", "flag": ":flag_it:", "UID": "24743"},
+    "kcst" : {"color": "orange", "nation": "northkorea", "flag": ":flag_kp:", "UID": "31911"},
+    "kari" : {"color": "brown", "nation": "southkorea", "flag": ":flag_kr:", "UID": "4294951285"},
+    "isro" : {"color": "black", "nation": "india", "flag": ":flag_in:", "UID": "4294953260"},
+    "jaxa" : {"color": "magenta", "nation": "japan", "flag": ":flag_jp:", "UID": "14443"},
+    "nasa" : {"color": "pink", "nation": "usa", "flag": ":flag_us:", "UID": "19944"},
+    "cnes" : {"color": "lime", "nation": "france", "flag": ":flag_fr:", "UID": "4294953077"},
+    #"ssau" : {"color": "navy", "nation": "ukraine", "flag": ":flag_ua:", "UID": 4294962036},
+    #"ros": {"color": "tan", "nation": "russia", "flag": ":flag_ru:", "UID": 4294962036},
 }
 
 nation_list = [
@@ -1485,8 +1498,6 @@ async def lobby_create_command(ctx):
         #Announce lobby prepared
         general = guild.get_channel(int(GENERAL))
         await general.send("Lobby created! Type `.join [name]` to join the lobby.")
-        if (connection != None):
-            connection.sendall(b'lobby start\n')
         return
 
 #Game setting commands
@@ -1566,8 +1577,7 @@ async def start_game_command(ctx):
         await apportion_tasks(ctx.guild)
         await send_tasks_to_all()
         await send_start_set_timers()
-        if (connection != None):
-            connection.sendall(b'start\n')
+        arduino.write(b'Start\n')
         return
 
  #Allows a member to join the lobby pre-game
@@ -1595,7 +1605,6 @@ async def join_lobby_command(ctx):
         role = discord.utils.get(ctx.guild.roles, name="Player")
         await ctx.author.add_roles(role)
         await send_roster(ctx.guild.get_channel(int(LOBBY)), True)
-        #TODO send player info to arduino
         return
 
 #Allows a player to change their name in the lobby without leaving and rejoining
@@ -1660,51 +1669,75 @@ async def claim_action_command(ctx):
     else:
         await claim_action(get_player_by_handle(ctx.author), unclaimed_action)
 
-TCP_IP = '10.0.0.246'
-ARDUINO_PORT = 8771
+def getPlayerByUID(uid):
+    for player in player_list:
+        if player.nation.uid == uid:
+            return player
+    return None
 
-arduino_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-arduino_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-arduino_server.setblocking(False)
-arduino_server.bind((TCP_IP, ARDUINO_PORT))
+def handle_arduino_action(data):
+    pass
 
-connection = None
+def handle_arduino_task(data):
+    info = data.split(':')
+    player = getPlayerByUID(info[0])
+    if player == None:
+        print("UID error!")
+        return
+    taskID = int(info[1])
+    step_code = int(info[2])
+    for task in player.tasks:
+        if (task.id == taskID):
+            if (task.complete_step(step_code)):
+                message = "Task recorded: "
+                message += task.name
+                player.discord_handle.dm_channel.send(message)
+                send_tasks(player)
+                return
+            elif (step_code <= task.completed_count):
+                player.discord_handle.dm_channel.send("You need to complete more steps before you can do this part of the task!")
+            else:
+                player.discord_handle.dm_channel.send("You have already claimed completion of this step!")
+    if player.role == "Imposter":
+        player.discord_handle.dm_channel.send("Task faked succesfully")
+    else:
+        player.discord_handle.dm_channel.send("That wasn't on your task list!")
+
+def register_node(node_info):
+    print("Registering node")
+    node_split = node_info.split(':')
+    global node_status
+    node_status[int(node_split[0])] = True
+    for x in range(len(node_status)):
+        if node_status[x] == True:
+            nodes_alive += 1
+    if nodes_alive != node_split[1]:
+        print("ERROR, node mismatch!!!")
+
+def handle_arduino(data):
+    print("Handling:", data)
+    if (data[0] == "R"):
+        register_node(data[2:])
+    elif (data[0] == "T"):
+        handle_arduino_task(data[2:])
+    elif (data[0] == "A"):
+        handle_arduino_action(data[2:])
 
 #Grabs data from the server to pass to the bot
 async def periodic_polling():
     await bot.wait_until_ready()
-    print("Background task connected, starting server")
-    arduino_server.listen(1)
+    print("Background task connected, starting serial listener")
+    global arduino
     print("Wating for connection from arduino hub")
-    global connection
+    arduino = serial.Serial('COM3', 115200, timeout=.5)
+    node_status[0] = True
+    print("Connected")
     while True:
-        try:
-            connection, client_address = arduino_server.accept()
-            print("Connection from ", client_address)
-            while True:
-                data_bytes = None
-                try:
-                    data_bytes=connection.recv(2048)
-                    print("Server received bytes: ", data_bytes)
-                    data = str(data_bytes.decode().strip())
-                    print("Data is: " + data)
-                    print("Data[0] is: ", data[0])
-                    if (data[0] == "R"):
-                        print ("Register")
-                        if (connection != None):
-                            connection.sendall(b'Test\n')
-                    if (data[0] == "A"):
-                        await handle_action(data[2:])
-                    if (data[0] == "T"):
-                        await complete_task_arduino(data[2:])
-                    if (data[0] == "N"):
-                        print("Adding node to active list")
-                except socket.error:
-                    await asyncio.sleep(0.25)
-                    pass
-        except:
-            await asyncio.sleep(0.25)
-            continue
+        data = arduino.readline()[:2]
+        arduino.flush()
+        if data:
+            handle_arduino(data)
+        await asyncio.sleep(0.25)
     print("Loop finished? Oh no!")
 
 #Runs the polling task and the bot

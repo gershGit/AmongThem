@@ -5,17 +5,17 @@
 
 //Pin declarations for physical tasks
 #define PUPILS_SW 6
-#define BLOOD_CAP 5
-#define DL_SW 4
+#define BLOOD_CAP A6
+#define DL_SW A7
 #define MRI_CONTACT A3
-#define ACCEPT_POWER 2
+#define ACCEPT_POWER 4
 #define VITALS_L A0
 #define PR_PIN A1
 #define VITALS_R A2
-#define DEP_TRIG A6
-#define DEP_ECHO A7
+#define DEP_TRIG 2
+#define DEP_ECHO 3
 #define DEP_SW A5
-#define LED_RED_PIN 3
+#define LED_RED_PIN 5
 #define LED_BLUE_PIN A4
 #define RF_CS 10
 #define RF_CE 9
@@ -63,8 +63,10 @@ bool vital_l_state = false;
 bool vital_r_state = false;
 
 //Variables for depth task
+float base_depth = 0;
 int depth_required = 0;
 bool depth_pressed = false;
+int depth_count = 0;
 
 //Variables for vision check
 int pupil_pos = 0;
@@ -101,6 +103,10 @@ void blinkLED(int pin, int delay) {
 bool readSwitchDigital(int pin)
 {
 	return digitalRead(pin) == LOW;
+}
+
+bool readSwitchAnalog(int pin) {
+	return analogRead(pin) < 200;
 }
 
 void setGameComplete(int task_num) {
@@ -233,8 +239,11 @@ void setup()
 	pinMode(PR_PIN, INPUT);
 	pinMode(ACCEPT_POWER, INPUT);
 	pinMode(PUPILS_SW, INPUT);
+	pinMode(DEP_SW, INPUT);
 	pinMode(LED_BLUE_PIN, OUTPUT);
 	pinMode(LED_RED_PIN, OUTPUT);
+	pinMode(DEP_TRIG, OUTPUT);
+	pinMode(DEP_ECHO, INPUT);
 
 	SPI.begin();
 	mfrc522.PCD_Init();
@@ -247,6 +256,24 @@ void setup()
 	Serial.println("Initialization complete");
 	connectToServer();
 	waitForStart();
+}
+
+void attemptAccept()
+{
+	task_start_time = millis();
+	digitalWrite(LED_BLUE_PIN, LOW);
+	node_state = 6;
+	task_start_time = millis();
+	if (power_waiting)
+	{
+		power_waiting = false;
+		setGameComplete(3);
+	}
+	else
+	{
+		digitalWrite(LED_BLUE_PIN, LOW);
+		digitalWrite(LED_RED_PIN, HIGH);
+	}
 }
 
 void startVisionTask() {
@@ -314,6 +341,144 @@ void updateVisionTask() {
 	}
 }
 
+void startDepthTask() {
+	Serial.println("Starting depth task");
+	analogWrite(LED_RED_PIN, 0);
+	node_state = 2;
+	task_start_time = millis();
+	task_complete = false;
+	last_tick = task_start_time;
+	depth_count = 0;
+	randomSeed(last_tick);
+	digitalWrite(LED_RED_PIN, LOW);
+	depth_required = random(5, 20);
+}
+
+void updateDepthTask() {
+	unsigned long now = millis();
+	if (now-last_tick > 250) {
+		last_tick = now;
+		digitalWrite(DEP_TRIG, LOW);
+		delayMicroseconds(2);
+		digitalWrite(DEP_TRIG, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(DEP_TRIG, LOW);
+		long duration = pulseIn(DEP_ECHO, HIGH);
+		int distance = duration * 0.034 / 2;
+		if (distance > depth_required-2 && distance < depth_required+2) {
+			digitalWrite(LED_RED_PIN, HIGH);
+			depth_count++;
+			if (depth_count >= 16) {
+				setGameComplete(2);
+			}
+		} else {
+			digitalWrite(LED_RED_PIN, LOW);
+		}
+	}
+}
+
+void startDownloadTask()
+{
+	task_start_time = millis();
+	node_state = 2;
+	dl_count = 0;
+	task_complete = false;
+	digitalWrite(LED_BLUE_PIN, LOW);
+	digitalWrite(LED_RED_PIN, LOW);
+	last_tick = millis();
+}
+
+void updateDownloadTask()
+{
+	if (millis() - last_tick > 100)
+	{
+		task_start_time = millis();
+		last_tick = millis();
+		dl_count++;
+		led_states[RED_LED] = !led_states[RED_LED];
+		if (led_states[RED_LED])
+		{
+			digitalWrite(LED_RED_PIN, HIGH);
+		}
+		else
+		{
+			digitalWrite(LED_RED_PIN, LOW);
+		}
+	}
+	if (dl_count >= 100)
+	{
+		setGameComplete(4);
+	}
+}
+
+void startVitalsTask() {
+	vitals_count = 0;
+	task_start_time = millis();
+	last_tick = task_start_time;
+	task_complete = false;
+	node_state = 5;
+	digitalWrite(LED_BLUE_PIN, LOW);
+	digitalWrite(LED_RED_PIN, LOW);
+}
+
+void updateVitalsTask() {
+	if (readSwitchAnalog(VITALS_L) || readSwitchAnalog(VITALS_R))
+	{
+		vitals_count = 0;
+		digitalWrite(LED_RED_PIN, LOW);
+		delay(750);
+		digitalWrite(LED_RED_PIN, HIGH);
+		delay(750);
+		digitalWrite(LED_RED_PIN, LOW);
+	}
+	else if (millis() - last_tick > 100)
+	{
+		task_start_time = millis();
+		digitalWrite(LED_RED_PIN, HIGH);
+		last_tick = millis();
+		vitals_count++;
+		if (vitals_count >= 50)
+		{
+			setGameComplete(5);
+		}
+	}
+}
+
+void startBloodTask()
+{
+	blood_count = 0;
+	task_start_time = millis();
+	last_tick = task_start_time;
+	task_complete = false;
+	node_state = 6;
+	digitalWrite(LED_BLUE_PIN, LOW);
+	digitalWrite(LED_RED_PIN, LOW);
+}
+
+void updateBloodTask()
+{
+	if (readSwitchAnalog(BLOOD_CAP))
+	{
+		blood_count = 0;
+		digitalWrite(LED_RED_PIN, LOW);
+		delay(750);
+		digitalWrite(LED_RED_PIN, HIGH);
+		delay(750);
+		digitalWrite(LED_RED_PIN, LOW);
+	}
+	else if (millis() - last_tick > 100)
+	{
+		task_start_time = millis();
+		digitalWrite(LED_RED_PIN, HIGH);
+		last_tick = millis();
+		blood_count++;
+		if (blood_count >= 50)
+		{
+			setGameComplete(6);
+		}
+	}
+}
+
 void loop()
 {
 	network.update();
@@ -328,7 +493,7 @@ void loop()
 		}
 	}
 
-	//Check on reaction task
+	//Check on reaction task (1)
 	if (readSwitchDigital(PUPILS_SW) && !pupil_pressed) {
 		pupil_pressed = true;
 		startVisionTask();
@@ -341,84 +506,63 @@ void loop()
 		updateVisionTask();
 	}
 
-	/*
-	//Check on download task
-	if (readSwitchDigital(DOWNLOAD_SW) && !download_begin_state)
+	//Check on depth task (2)
+	if (readSwitchAnalog(DEP_SW) && !depth_pressed)
 	{
-		download_begin_state = true;
-		startDownloadTask();
+		depth_pressed = true;
+		startDepthTask();
 	}
-	else if (!readSwitchDigital(DOWNLOAD_SW) && download_begin_state)
+	else if (!readSwitchAnalog(DEP_SW) && depth_pressed)
 	{
-		download_begin_state = false;
+		depth_pressed = false;
 	}
-	if (node_state == 2) {
-		updateDownloadTask();
+	if (node_state == 2)
+	{
+		updateDepthTask();
 	}
 
-	//Check on heartbeat task
-	if (readSwitchDigital(HEARTBEAT_SW) && !hb_state && node_state != 3 && millis()- last_tick > 1000)
+	//Check on accept power task (3)
+	if (readSwitchDigital(ACCEPT_POWER) && !accept_state)
 	{
-		hb_state = true;
-		startHeartBeatTask();
-	}
-	else if (!readSwitchDigital(HEARTBEAT_SW) && hb_state)
-	{
-		hb_state = false;
-	}
-	if (node_state == 3)
-	{
-		updateHeartBeatTask();
-	}
-
-	if (readSwitchDigital(REPRESSURIZE_SW) && !pressure_state && node_state != 4 && millis() - last_tick > 1000)
-	{
-		pressure_state = true;
-		startPressurizeTask();
-	}
-	else if (!readSwitchDigital(REPRESSURIZE_SW) && pressure_state)
-	{
-		pressure_state = false;
-	}
-	if (node_state == 4)
-	{
-		updatePressurizeTask();
-	}
-
-	if (readSwitchDigital(VENT_SW) && !vent_state && node_state != 5 && millis() - last_tick > 1000)
-	{
-		Serial.println("Starting vent task");
-		vent_state = true;
-		startVentTask();
-	}
-	else if (!readSwitchDigital(VENT_SW) && vent_state)
-	{
-		vent_state = false;
-	}
-	if (node_state == 5)
-	{
-		updateVentTask();
-	}
-
-	if (readSwitchDigital(ACCEPT_POWER) && !accept_state) {
 		accept_state = true;
 		attemptAccept();
-	} else if (!readSwitchDigital(ACCEPT_POWER) && accept_state) {
+	}
+	else if (!readSwitchDigital(ACCEPT_POWER) && accept_state)
+	{
 		accept_state = false;
 	}
 
-	if (analogRead(LOCK_OXYGEN_CAP) > 200 && !lock_state && node_state != 7 && millis() - last_tick > 1000) {
-		lock_state = true;
-		startLockTanks();
-	}
-	else if (analogRead(LOCK_OXYGEN_CAP) < 200 && lock_state) {
-		lock_state = false;
-	}
-	if (node_state == 7)
+	//Check on vitals task (5)
+	if (!readSwitchAnalog(VITALS_L) && !blood_state && node_state != 5 && millis() - last_tick > 1000 && !readSwitchAnalog(VITALS_R) && !vital_r_state)
 	{
-		updateLockTanks();
+		vital_l_state = true;
+		vital_r_state = true;
+		startVitalsTask();
 	}
-	*/
+	else if (readSwitchAnalog(VITALS_L) && vital_l_state && readSwitchAnalog(VITALS_R) && vital_r_state)
+	{
+		vital_l_state = false;
+		vital_r_state = false;
+	}
+	if (node_state == 5)
+	{
+		updateVitalsTask();
+	}
+
+	//Check on blood sample task (6)
+	if (!readSwitchAnalog(BLOOD_CAP) && !blood_state && node_state != 6 && millis() - last_tick > 1000)
+	{
+		blood_state = true;
+		startBloodTask();
+	}
+	else if (readSwitchAnalog(BLOOD_CAP) && blood_state)
+	{
+		blood_state = false;
+	}
+	if (node_state == 6)
+	{
+		updateBloodTask();
+	}
 
 	if (millis() - task_start_time > 25000)
 	{

@@ -21,7 +21,7 @@
 #define RFID_RST 7
 #define RFID_SDA 8
 
-int task_ids[10] = {0, 111, 112, 113, 114, 115, 116, 117, 118, 119};
+int task_ids[10] = {0, 011, 012, 013, 014, 015, 016, 017, 018, 019};
 
 #define DHTTYPE DHT11
 DHT dht(TEMPERATURE_PIN, DHTTYPE);
@@ -225,6 +225,21 @@ void waitForStart() {
 	}
 }
 
+void waitForRFID() {
+	while(true) {
+		if (mfrc522.PICC_IsNewCardPresent())
+		{
+			unsigned long uid = getRFID();
+			if (uid != -1)
+			{
+				digitalWrite(LED_BLUE_PIN, HIGH);
+				return;
+			}
+		}
+		delay(250);
+	}
+}
+
 void setup()
 {
 	Serial.begin(115200);
@@ -249,11 +264,14 @@ void setup()
 	delay(100);
 
 	Serial.println("Initialization complete");
+
+	waitForRFID();
 	connectToServer();
 	waitForStart();
 }
 
-void startTempSensor() {
+void startTempSensor()
+{
 	digitalWrite(LED_BLUE_PIN, LOW);
 	task_start_time = millis();
 	node_state = 1;
@@ -262,23 +280,30 @@ void startTempSensor() {
 	last_tick = millis();
 }
 
-void updateTempSensor() {
+void updateTempSensor()
+{
 	float current_temp = dht.readTemperature();
-	if (millis() - last_tick > 250) {
+	if (millis() - last_tick > 250)
+	{
 		last_tick = millis();
 		led_states[GREEN_LED] = !led_states[GREEN_LED];
-		if (led_states[GREEN_LED]) {
+		if (led_states[GREEN_LED])
+		{
 			digitalWrite(LED_GREEN_PIN, HIGH);
-		} else {
+		}
+		else
+		{
 			digitalWrite(LED_GREEN_PIN, LOW);
 		}
 	}
-	if (current_temp > base_temp + 0.4) {
+	if (current_temp > base_temp + 0.4)
+	{
 		setGameComplete(1);
 	}
 }
 
-void startDownloadTask() {
+void startDownloadTask()
+{
 	task_start_time = millis();
 	node_state = 2;
 	dl_count = 0;
@@ -287,24 +312,31 @@ void startDownloadTask() {
 	last_tick = millis();
 }
 
-void updateDownloadTask() {
-	if (millis() - last_tick > 100) {
+void updateDownloadTask()
+{
+	if (millis() - last_tick > 100)
+	{
 		task_start_time = millis();
 		last_tick = millis();
 		dl_count++;
 		led_states[RED_LED] = !led_states[RED_LED];
-		if (led_states[RED_LED]) {
+		if (led_states[RED_LED])
+		{
 			digitalWrite(LED_RED_PIN, HIGH);
-		} else {
+		}
+		else
+		{
 			digitalWrite(LED_RED_PIN, LOW);
 		}
 	}
-	if (dl_count >= 100) {
+	if (dl_count >= 100)
+	{
 		setGameComplete(2);
 	}
 }
 
-void startHeartBeatTask() {
+void startHeartBeatTask()
+{
 	digitalWrite(LED_BLUE_PIN, LOW);
 	task_start_time = millis();
 	hb_count = 0;
@@ -316,7 +348,7 @@ void startHeartBeatTask() {
 
 void updateHeartBeatTask()
 {
-	if (millis() - last_tick > 750 && millis() - last_tick < 1250)
+	if (millis() - last_tick > 750 && millis() - last_tick < 1750)
 	{
 		digitalWrite(LED_GREEN_PIN, HIGH);
 		if (readSwitchDigital(HEARTBEAT_SW))
@@ -331,7 +363,7 @@ void updateHeartBeatTask()
 			}
 		}
 	}
-	else if (millis() - last_tick > 1250)
+	else if (millis() - last_tick > 1750)
 	{
 		digitalWrite(LED_RED_PIN, HIGH);
 		digitalWrite(LED_GREEN_PIN, LOW);
@@ -360,7 +392,8 @@ void updateHeartBeatTask()
 	}
 }
 
-void startPressurizeTask() {
+void startPressurizeTask()
+{
 	digitalWrite(LED_BLUE_PIN, LOW);
 	task_start_time = millis();
 	pressure_count = 0;
@@ -390,7 +423,8 @@ void updatePressurizeTask()
 	}
 }
 
-void startVentTask() {
+void startVentTask()
+{
 	digitalWrite(LED_BLUE_PIN, LOW);
 	task_start_time = millis();
 	vent_count = 0;
@@ -430,10 +464,13 @@ void updateVentTask()
 		last_tick = millis();
 		vent_count++;
 		vent_state = true;
-		if (vent_stage == 0) {
+		if (vent_stage == 0)
+		{
 			digitalWrite(LED_RED_PIN, HIGH);
 			digitalWrite(LED_GREEN_PIN, HIGH);
-		} else {
+		}
+		else
+		{
 			digitalWrite(LED_RED_PIN, LOW);
 			digitalWrite(LED_GREEN_PIN, HIGH);
 		}
@@ -452,30 +489,37 @@ void updateVentTask()
 	}
 }
 
-void attemptAccept() {
+void attemptAccept()
+{
 	task_start_time = millis();
 	digitalWrite(LED_BLUE_PIN, LOW);
 	node_state = 6;
 	task_start_time = millis();
-	if (power_waiting) {
+	if (power_waiting)
+	{
 		power_waiting = false;
 		setGameComplete(6);
-	} else {
+	}
+	else
+	{
 		digitalWrite(LED_GREEN_PIN, LOW);
 		digitalWrite(LED_BLUE_PIN, LOW);
 		digitalWrite(LED_RED_PIN, HIGH);
 	}
 }
 
-void startLockTanks() {
+void startLockTanks()
+{
 	digitalWrite(LED_BLUE_PIN, LOW);
 	node_state = 7;
 	lock_count = 0;
 	task_start_time = millis();
 }
 
-void updateLockTanks() {
-	if (analogRead(LOCK_OXYGEN_CAP) > 200 && millis()-last_tick > 100 ) {
+void updateLockTanks()
+{
+	if (analogRead(LOCK_OXYGEN_CAP) > 200 && millis() - last_tick > 100)
+	{
 		task_start_time = millis();
 		digitalWrite(LED_GREEN_PIN, HIGH);
 		digitalWrite(LED_RED_PIN, LOW);
@@ -493,23 +537,29 @@ void loop()
 	network.update();
 	checkRFID();
 	payload_t payload = checkNetwork();
-	if (!payload.msg_type == -1) {
-		if (payload.msg_type == 80) {
+	if (!payload.msg_type == -1)
+	{
+		if (payload.msg_type == 80)
+		{
 			power_waiting = true;
-		} else if (payload.msg_type = 70) {
+		}
+		else if (payload.msg_type = 70)
+		{
 			resetHub();
 			waitForStart();
 		}
 	}
 
-	if (node_state != last_node_state) {
+	if (node_state != last_node_state)
+	{
 		Serial.print("Node state: ");
 		Serial.println(node_state);
 		last_node_state = node_state;
 	}
 
 	//Check on temperature task
-	if (analogRead(TEMPERATURE_BEGIN) > 150 && temp_begin_state == false) {
+	if (analogRead(TEMPERATURE_BEGIN) > 150 && temp_begin_state == false)
+	{
 		temp_begin_state = true;
 		startTempSensor();
 	}
@@ -517,12 +567,13 @@ void loop()
 	{
 		temp_begin_state = false;
 	}
-	if (node_state == 1) {
+	if (node_state == 1)
+	{
 		updateTempSensor();
 	}
 
 	//Check on download task
-	if (readSwitchDigital(DOWNLOAD_SW) && !download_begin_state)
+	if (readSwitchDigital(DOWNLOAD_SW) && !download_begin_state && node_state != 2 && millis()-last_tick > 150)
 	{
 		download_begin_state = true;
 		startDownloadTask();
@@ -531,12 +582,13 @@ void loop()
 	{
 		download_begin_state = false;
 	}
-	if (node_state == 2) {
+	if (node_state == 2)
+	{
 		updateDownloadTask();
 	}
 
 	//Check on heartbeat task
-	if (readSwitchDigital(HEARTBEAT_SW) && !hb_state && node_state != 3 && millis()- last_tick > 1000)
+	if (readSwitchDigital(HEARTBEAT_SW) && !hb_state && node_state != 3 && millis() - last_tick > 150)
 	{
 		hb_state = true;
 		startHeartBeatTask();
@@ -550,7 +602,7 @@ void loop()
 		updateHeartBeatTask();
 	}
 
-	if (readSwitchDigital(REPRESSURIZE_SW) && !pressure_state && node_state != 4 && millis() - last_tick > 1000)
+	if (readSwitchDigital(REPRESSURIZE_SW) && !pressure_state && node_state != 4 && millis() - last_tick > 150)
 	{
 		pressure_state = true;
 		startPressurizeTask();
@@ -564,7 +616,7 @@ void loop()
 		updatePressurizeTask();
 	}
 
-	if (readSwitchDigital(VENT_SW) && !vent_state && node_state != 5 && millis() - last_tick > 1000)
+	if (readSwitchDigital(VENT_SW) && !vent_state && node_state != 5 && millis() - last_tick > 150)
 	{
 		Serial.println("Starting vent task");
 		vent_state = true;
@@ -579,18 +631,23 @@ void loop()
 		updateVentTask();
 	}
 
-	if (readSwitchDigital(ACCEPT_POWER) && !accept_state) {
+	if (readSwitchDigital(ACCEPT_POWER) && !accept_state)
+	{
 		accept_state = true;
 		attemptAccept();
-	} else if (!readSwitchDigital(ACCEPT_POWER) && accept_state) {
+	}
+	else if (!readSwitchDigital(ACCEPT_POWER) && accept_state)
+	{
 		accept_state = false;
 	}
 
-	if (analogRead(LOCK_OXYGEN_CAP) > 200 && !lock_state && node_state != 7 && millis() - last_tick > 1000) {
+	if (analogRead(LOCK_OXYGEN_CAP) > 200 && !lock_state && node_state != 7 && millis() - last_tick > 150)
+	{
 		lock_state = true;
 		startLockTanks();
 	}
-	else if (analogRead(LOCK_OXYGEN_CAP) < 200 && lock_state) {
+	else if (analogRead(LOCK_OXYGEN_CAP) < 200 && lock_state)
+	{
 		lock_state = false;
 	}
 	if (node_state == 7)
